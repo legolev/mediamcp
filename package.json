@@ -1,6 +1,7 @@
 {
   "name": "mediamcp",
   "version": "0.1.0",
+  "mcpName": "io.github.legolev/mediamcp",
   "description": "MCP server for AI media generation — create and edit images, generate video via OpenRouter or any OpenAI-compatible API",
   "type": "module",
   "bin": {
@@ -23,6 +24,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
+    "smoke": "node scripts/smoke.mjs",
     "prepublishOnly": "npm run typecheck && npm run build && npm test"
   },
   "repository": {

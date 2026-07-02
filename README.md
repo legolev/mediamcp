@@ -1,0 +1,168 @@
+# mediamcp
+
+[![npm version](https://img.shields.io/npm/v/mediamcp)](https://www.npmjs.com/package/mediamcp)
+[![CI](https://github.com/legolev/mediamcp/actions/workflows/ci.yml/badge.svg)](https://github.com/legolev/mediamcp/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+**Give any AI agent the ability to generate and edit images and videos.** mediamcp is an MCP (Model Context Protocol) server that connects your AI assistant — Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, or anything else that speaks MCP — to cloud image/video models (Gemini Flash Image, GPT-5 Image, Seedream, Veo, Sora, …) through [OpenRouter](https://openrouter.ai) or any OpenAI-compatible API.
+
+Generated files are always saved to disk (default `~/Pictures/mediamcp`), and every response includes the absolute file path plus a small inline preview so the agent can see what it made.
+
+> **AI agents:** installation instructions optimized for you are in [llms-install.md](llms-install.md).
+
+**You need an OpenRouter API key** — get one at <https://openrouter.ai/keys>.
+
+## Quick install
+
+### Claude Code
+
+```bash
+claude mcp add mediamcp -e OPENROUTER_API_KEY=sk-or-v1-YOUR_KEY -- npx -y mediamcp
+```
+
+### Claude Desktop
+
+Add to `claude_desktop_config.json` (macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`, Windows: `%APPDATA%\Claude\claude_desktop_config.json`), then restart Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "mediamcp": {
+      "command": "npx",
+      "args": ["-y", "mediamcp"],
+      "env": { "OPENROUTER_API_KEY": "sk-or-v1-YOUR_KEY" }
+    }
+  }
+}
+```
+
+### Cursor
+
+[![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=mediamcp&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIm1lZGlhbWNwIl0sImVudiI6eyJPUEVOUk9VVEVSX0FQSV9LRVkiOiJZT1VSX09QRU5ST1VURVJfS0VZIn19)
+
+Or add to `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "mediamcp": {
+      "command": "npx",
+      "args": ["-y", "mediamcp"],
+      "env": { "OPENROUTER_API_KEY": "sk-or-v1-YOUR_KEY" }
+    }
+  }
+}
+```
+
+### Windsurf
+
+Add to `~/.codeium/windsurf/mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "mediamcp": {
+      "command": "npx",
+      "args": ["-y", "mediamcp"],
+      "env": { "OPENROUTER_API_KEY": "sk-or-v1-YOUR_KEY" }
+    }
+  }
+}
+```
+
+### VS Code (GitHub Copilot)
+
+[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_mediamcp-0098FF?logo=githubcopilot)](https://vscode.dev/redirect/mcp/install?name=mediamcp&config=%7B%22name%22%3A%22mediamcp%22%2C%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22mediamcp%22%5D%2C%22env%22%3A%7B%22OPENROUTER_API_KEY%22%3A%22YOUR_OPENROUTER_KEY%22%7D%7D)
+
+Or add to `.vscode/mcp.json` (prompts for the key, keeps it out of the file):
+
+```json
+{
+  "servers": {
+    "mediamcp": {
+      "command": "npx",
+      "args": ["-y", "mediamcp"],
+      "env": { "OPENROUTER_API_KEY": "${input:openrouter-key}" }
+    }
+  },
+  "inputs": [
+    {
+      "id": "openrouter-key",
+      "type": "promptString",
+      "password": true,
+      "description": "OpenRouter API key (https://openrouter.ai/keys)"
+    }
+  ]
+}
+```
+
+## What your agent can do with it
+
+Once installed, just ask your agent things like *“generate a hero image for my landing page, 16:9”*, *“remove the background from logo.png”*, or *“make a 8-second video of ocean waves at sunset”*. The agent picks the right tool:
+
+| Tool | What it does |
+| --- | --- |
+| `generate_image` | Text → image(s). Saves to disk, returns path + inline preview. Supports `count` (up to 4 variations), `aspect_ratio`, `model` override. |
+| `edit_image` | Existing image(s) + instruction → edited image. Accepts file paths, `https://` or `data:` URLs; multiple sources for composition edits. |
+| `generate_video` | Text → video (async job, typically 1–5 min). Waits, saves the mp4, returns path. On timeout returns a resumable `polling_url`. |
+| `check_video_status` | Resume waiting for a video job by `polling_url` / id; downloads when done. |
+| `list_models` | Lists image/video-capable model slugs with pricing, so the agent can pick a model. |
+| `check_config` | Diagnostics: key presence/validity, endpoint, defaults, output dir writability. Run this first if something fails. |
+
+## Configuration
+
+Everything is configured through environment variables in the `env` block of your MCP client config:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `OPENROUTER_API_KEY` | — | **Required.** Your OpenRouter key. |
+| `MEDIAMCP_API_KEY` | — | Alias for non-OpenRouter endpoints; takes precedence if both are set. |
+| `MEDIAMCP_BASE_URL` | `https://openrouter.ai/api/v1` | Any OpenAI-compatible API root. |
+| `MEDIAMCP_MODEL` | `google/gemini-2.5-flash-image` | Default image model slug. |
+| `MEDIAMCP_VIDEO_MODEL` | `google/veo-3.1` | Default video model slug. |
+| `MEDIAMCP_OUTPUT_DIR` | `~/Pictures/mediamcp` | Where generated files are saved (`~/mediamcp` if `~/Pictures` doesn't exist). |
+| `MEDIAMCP_TIMEOUT_MS` | `120000` | Per-request HTTP timeout. |
+| `MEDIAMCP_PREVIEW` | `true` | Return an inline preview image with each result (`false` = paths only). |
+| `MEDIAMCP_PREVIEW_MAX_DIM` | `768` | Longest side of the inline preview in pixels. |
+
+### Using a different provider
+
+Point `MEDIAMCP_BASE_URL` at any OpenAI-compatible endpoint and set the matching key:
+
+```json
+"env": {
+  "MEDIAMCP_BASE_URL": "https://your-endpoint.example.com/v1",
+  "MEDIAMCP_API_KEY": "your-key",
+  "MEDIAMCP_MODEL": "your/image-model"
+}
+```
+
+mediamcp automatically probes the endpoint's API shape: the dedicated `/images` endpoint (OpenRouter), `/images/generations` (OpenAI classic), and `chat/completions` with image modalities — whichever works first is remembered.
+
+## Troubleshooting
+
+1. Ask your agent to run the **`check_config`** tool — it reports exactly what's misconfigured and how to fix it.
+2. From a terminal you can run the same diagnostics: `npx -y mediamcp --check` (uses env vars from your shell).
+3. Common issues:
+   - **"No API key configured"** — add `OPENROUTER_API_KEY` to the `env` block of the server entry in your MCP client config (not just your shell profile) and restart the client.
+   - **"Out of credits (HTTP 402)"** — top up at <https://openrouter.ai/credits>.
+   - **"Not found (HTTP 404) … for model"** — the model slug is wrong; run `list_models`.
+   - **Nothing happens in the client** — make sure Node.js ≥ 20 is installed (`node --version`).
+
+## Development
+
+```bash
+git clone https://github.com/legolev/mediamcp && cd mediamcp
+npm install
+npm run build       # bundle to dist/index.js
+npm test            # vitest unit tests
+npm run inspect     # open MCP Inspector against the built server
+```
+
+## License
+
+[MIT](LICENSE)
+
+---
+
+<sub>mcp-name: io.github.legolev/mediamcp</sub>
