@@ -1,0 +1,19 @@
+name: 💡 Feature request
+description: Suggest an idea / Предложить идею
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: You can write in English or Russian. / Можно писать по-русски.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the use case — what do you want your agent to be able to do?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: A new tool? A new provider (fal.ai, Replicate…)? A new parameter?

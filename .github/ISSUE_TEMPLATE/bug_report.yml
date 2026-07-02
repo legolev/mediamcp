@@ -1,0 +1,33 @@
+name: 🐛 Bug report
+description: Something doesn't work / Что-то не работает
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: You can write in English or Russian. / Можно писать по-русски.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: The tool call you made and what you got instead of the expected result.
+      placeholder: "generate_image with prompt '...' returned ..."
+    validations:
+      required: true
+  - type: textarea
+    id: check-config
+    attributes:
+      label: check_config output
+      description: Ask your agent to run the `check_config` tool (or run `npx -y mediamcp --check`) and paste the output — it masks your API key.
+      render: text
+  - type: input
+    id: client
+    attributes:
+      label: MCP client
+      placeholder: Claude Code 2.x / Claude Desktop / Cursor / Windsurf / VS Code
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: mediamcp version
+      placeholder: npx -y mediamcp --version

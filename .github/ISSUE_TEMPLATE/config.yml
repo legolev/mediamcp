@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 💬 Question / Вопрос
+    url: https://github.com/legolev/mediamcp/discussions
+    about: Ask usage questions in Discussions / Вопросы по использованию — в Discussions

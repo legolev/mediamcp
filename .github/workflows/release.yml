@@ -24,8 +24,20 @@ jobs:
       - run: npm run build
       - run: npm test
       - run: npm run smoke
-      - run: npm publish --access public
+      - name: Check whether this version is already on npm
+        id: npm-check
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "mediamcp@$VERSION" version >/dev/null 2>&1; then
+            echo "Version $VERSION already published — skipping publish steps."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.npm-check.outputs.skip == 'false'
+        run: npm publish --access public
       - name: Publish to MCP registry
+        if: steps.npm-check.outputs.skip == 'false'
         run: |
           curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
           ./mcp-publisher login github-oidc
