@@ -1,0 +1,61 @@
+{
+  "name": "mediamcp",
+  "version": "0.1.0",
+  "description": "MCP server for AI media generation — create and edit images, generate video via OpenRouter or any OpenAI-compatible API",
+  "type": "module",
+  "bin": {
+    "mediamcp": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "llms-install.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
+    "prepublishOnly": "npm run typecheck && npm run build && npm test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/legolev/mediamcp.git"
+  },
+  "homepage": "https://github.com/legolev/mediamcp#readme",
+  "bugs": {
+    "url": "https://github.com/legolev/mediamcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "image-generation",
+    "video-generation",
+    "openrouter",
+    "gemini",
+    "gpt-image",
+    "ai"
+  ],
+  "author": "Oleg Utekov (https://github.com/legolev)",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "jimp": "^1.6.0",
+    "zod": "^4.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "tsup": "^8.5.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.0"
+  }
+}
