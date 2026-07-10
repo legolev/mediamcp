@@ -1,0 +1,11 @@
+node_modules
+dist
+legacy
+output
+test
+.git
+.github
+.env
+.env.*
+*.md
+assets
