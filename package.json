@@ -1,6 +1,6 @@
 {
   "name": "mediamcp",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "mcpName": "io.github.legolev/mediamcp",
   "description": "MCP server for AI media generation — create and edit images, generate video via OpenRouter or any OpenAI-compatible API",
   "type": "module",
