@@ -182,6 +182,48 @@ describe("video", () => {
     expect(bodyOf(calls[0]!)).toMatchObject({ model: "google/veo-3.1", prompt: "waves", duration: 8 });
   });
 
+  it("sends frame_images for image-to-video (first/last frame)", async () => {
+    mockFetch(jsonResponse(202, { id: "job2", polling_url: "https://openrouter.ai/api/v1/videos/job2" }));
+    const provider = new OpenAiCompatibleProvider(config);
+    const first = buildDataUrl("image/png", PNG_BYTES);
+    await provider.startVideo({
+      prompt: "animate it",
+      model: "bytedance/seedance-2.0",
+      frameImages: [
+        { url: first, frameType: "first_frame" },
+        { url: "https://example.com/last.png", frameType: "last_frame" },
+      ],
+    });
+    const body = bodyOf(calls[0]!);
+    expect(body.frame_images).toEqual([
+      { type: "image_url", image_url: { url: first }, frame_type: "first_frame" },
+      { type: "image_url", image_url: { url: "https://example.com/last.png" }, frame_type: "last_frame" },
+    ]);
+    expect(body.input_references).toBeUndefined();
+  });
+
+  it("sends input_references for reference-to-video", async () => {
+    mockFetch(jsonResponse(202, { id: "job3", polling_url: "https://openrouter.ai/api/v1/videos/job3" }));
+    const provider = new OpenAiCompatibleProvider(config);
+    await provider.startVideo({
+      prompt: "same backpack, neon city",
+      model: "bytedance/seedance-2.0",
+      referenceImages: ["https://example.com/ref.jpg"],
+    });
+    const body = bodyOf(calls[0]!);
+    expect(body.input_references).toEqual([{ type: "image_url", image_url: { url: "https://example.com/ref.jpg" } }]);
+    expect(body.frame_images).toBeUndefined();
+  });
+
+  it("omits image arrays entirely for plain text-to-video", async () => {
+    mockFetch(jsonResponse(202, { id: "job4", polling_url: "https://openrouter.ai/api/v1/videos/job4" }));
+    const provider = new OpenAiCompatibleProvider(config);
+    await provider.startVideo({ prompt: "waves", model: "google/veo-3.1" });
+    const body = bodyOf(calls[0]!);
+    expect(body.frame_images).toBeUndefined();
+    expect(body.input_references).toBeUndefined();
+  });
+
   it("reads unsigned_urls from the poll response", async () => {
     mockFetch(
       jsonResponse(200, { id: "job1", status: "completed", unsigned_urls: ["https://openrouter.ai/dl/1"] }),

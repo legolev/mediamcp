@@ -25,6 +25,12 @@ export interface EditImageRequest {
   imageUrls: string[];
 }
 
+export interface VideoFrameImage {
+  /** data: or https: URL, already normalized by media/sources. */
+  url: string;
+  frameType: "first_frame" | "last_frame";
+}
+
 export interface StartVideoRequest {
   prompt: string;
   model: string;
@@ -32,6 +38,10 @@ export interface StartVideoRequest {
   resolution?: string;
   aspectRatio?: string;
   generateAudio?: boolean;
+  /** Image-to-video: the clip animates from/to these exact frames. */
+  frameImages?: VideoFrameImage[];
+  /** Style/content reference images (reference-to-video), not exact frames. */
+  referenceImages?: string[];
 }
 
 export interface VideoJob {

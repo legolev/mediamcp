@@ -206,6 +206,18 @@ export class OpenAiCompatibleProvider implements MediaProvider {
     if (req.resolution !== undefined) body.resolution = req.resolution;
     if (req.aspectRatio !== undefined) body.aspect_ratio = req.aspectRatio;
     if (req.generateAudio !== undefined) body.generate_audio = req.generateAudio;
+    // Image-to-video: first/last frame control.
+    if (req.frameImages?.length) {
+      body.frame_images = req.frameImages.map((f) => ({
+        type: "image_url",
+        image_url: { url: f.url },
+        frame_type: f.frameType,
+      }));
+    }
+    // Reference-to-video: style/content guidance images.
+    if (req.referenceImages?.length) {
+      body.input_references = req.referenceImages.map((url) => ({ type: "image_url", image_url: { url } }));
+    }
 
     const json = await this.postJson("/videos", body, req.model);
     const id = typeof json.id === "string" ? json.id : null;

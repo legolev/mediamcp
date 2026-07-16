@@ -3,9 +3,11 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 import { toErrorMessage } from "../errors.js";
+import { MAX_SOURCE_IMAGES } from "../constants.js";
 import { extensionForMime } from "../media/dataUrl.js";
+import { loadImageSource } from "../media/sources.js";
 import { buildFilename, resolveOutputDir, saveBytes } from "../media/storage.js";
-import type { VideoStatus } from "../providers/types.js";
+import type { VideoFrameImage, VideoStatus } from "../providers/types.js";
 import {
   aspectRatioField,
   filenamePrefixField,
@@ -77,15 +79,39 @@ export function registerGenerateVideo(server: McpServer, ctx: ToolContext): void
     {
       title: "Generate Video",
       description:
-        "Generate a video from a text prompt (async job: starts generation, then waits and polls). " +
-        "Video generation typically takes 1-5 minutes. The finished file is saved to disk and its absolute " +
-        "path is returned. If waiting times out, a polling_url is returned — pass it to check_video_status " +
-        "later instead of starting a new (billed) job.",
+        "Generate a video from a text prompt, and optionally from an input image (image-to-video). " +
+        "Async job: starts generation, then waits and polls. Video generation typically takes 1-5 minutes. " +
+        "The finished file is saved to disk and its absolute path is returned. If waiting times out, a " +
+        "polling_url is returned — pass it to check_video_status later instead of starting a new (billed) job. " +
+        "For image-to-video, pass first_frame_image so the clip animates from that exact picture (e.g. a still " +
+        "produced by generate_image). Image inputs require an image-to-video-capable model such as " +
+        "'bytedance/seedance-2.0', 'bytedance/seedance-2.0-fast', or 'google/veo-3.1'.",
       inputSchema: {
         prompt: promptField,
         model: modelField.describe(
-          "Video model slug, e.g. 'google/veo-3.1' or 'openai/sora-2-pro'. Omit to use the configured default.",
+          "Video model slug, e.g. 'google/veo-3.1' or 'openai/sora-2-pro'. For image-to-video use an i2v-capable " +
+            "model like 'bytedance/seedance-2.0' or 'bytedance/seedance-2.0-fast'. Omit to use the configured default.",
         ),
+        first_frame_image: z
+          .string()
+          .optional()
+          .describe(
+            "Image-to-video: the generated clip starts on this exact image and animates forward. " +
+              "Accepts an absolute file path, file:// URL, https:// URL, or data: URL.",
+          ),
+        last_frame_image: z
+          .string()
+          .optional()
+          .describe("Optional ending frame the clip animates toward. Same accepted formats as first_frame_image."),
+        reference_images: z
+          .array(z.string())
+          .min(1)
+          .max(MAX_SOURCE_IMAGES)
+          .optional()
+          .describe(
+            "Style/content reference image(s) that guide the look without being exact frames (reference-to-video). " +
+              "Same accepted formats as first_frame_image.",
+          ),
         duration_seconds: z.number().int().min(1).max(60).optional().describe("Clip length in seconds (model-dependent)."),
         resolution: z
           .enum(["480p", "720p", "1080p", "2K", "4K"])
@@ -109,6 +135,17 @@ export function registerGenerateVideo(server: McpServer, ctx: ToolContext): void
     async (args, extra) => {
       const model = args.model?.trim() || ctx.config.videoModel;
       try {
+        const frameImages: VideoFrameImage[] = [];
+        if (args.first_frame_image) {
+          frameImages.push({ url: await loadImageSource(args.first_frame_image), frameType: "first_frame" });
+        }
+        if (args.last_frame_image) {
+          frameImages.push({ url: await loadImageSource(args.last_frame_image), frameType: "last_frame" });
+        }
+        const referenceImages = args.reference_images
+          ? await Promise.all(args.reference_images.map((source) => loadImageSource(source)))
+          : [];
+
         const job = await ctx.provider.startVideo({
           prompt: args.prompt,
           model,
@@ -116,6 +153,8 @@ export function registerGenerateVideo(server: McpServer, ctx: ToolContext): void
           ...(args.resolution !== undefined ? { resolution: args.resolution } : {}),
           ...(args.aspect_ratio !== undefined ? { aspectRatio: args.aspect_ratio } : {}),
           generateAudio: args.generate_audio,
+          ...(frameImages.length ? { frameImages } : {}),
+          ...(referenceImages.length ? { referenceImages } : {}),
         });
 
         const deadline = Date.now() + args.wait_seconds * 1000;

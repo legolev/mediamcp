@@ -49,21 +49,29 @@ export const CURATED_MODELS: ModelInfo[] = [
   {
     id: "google/veo-3.1",
     name: "Veo 3.1",
-    description: "High-quality video with audio.",
+    description: "High-quality video with audio. Text-to-video and image-to-video (first/last frame).",
+    type: "video",
+    recommended: true,
+  },
+  {
+    id: "bytedance/seedance-2.0",
+    name: "Seedance 2.0",
+    description:
+      "Affordable, strong at character/style consistency. Image-to-video (first & last frame) and reference-to-video.",
+    type: "video",
+    recommended: true,
+  },
+  {
+    id: "bytedance/seedance-2.0-fast",
+    name: "Seedance 2.0 Fast",
+    description: "Fastest/cheapest option for image-to-video. Great for quick animations from a still image.",
     type: "video",
     recommended: true,
   },
   {
     id: "openai/sora-2-pro",
     name: "Sora 2 Pro",
-    description: "Cinematic video generation.",
-    type: "video",
-    recommended: true,
-  },
-  {
-    id: "bytedance/seedance-1.5-pro",
-    name: "Seedance 1.5 Pro",
-    description: "Fast, affordable video.",
+    description: "Cinematic text-to-video and image-to-video (being retired on OpenRouter Sep 2026).",
     type: "video",
     recommended: true,
   },

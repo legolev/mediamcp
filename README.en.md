@@ -113,13 +113,13 @@ Or add to `.vscode/mcp.json` (prompts for the key, keeps it out of the file):
 
 ## What your agent can do with it
 
-Once installed, just ask your agent things like *“generate a hero image for my landing page, 16:9”*, *“remove the background from logo.png”*, or *“make a 8-second video of ocean waves at sunset”*. The agent picks the right tool:
+Once installed, just ask your agent things like *“generate a hero image for my landing page, 16:9”*, *“remove the background from logo.png”*, *“make a 8-second video of ocean waves at sunset”*, or *“animate logo.png into a 4-second video”* (image-to-video). The agent picks the right tool:
 
 | Tool | What it does |
 | --- | --- |
 | `generate_image` | Text → image(s). Saves to disk, returns path + inline preview. Supports `count` (up to 4 variations), `aspect_ratio`, `model` override. |
 | `edit_image` | Existing image(s) + instruction → edited image. Accepts file paths, `https://` or `data:` URLs; multiple sources for composition edits. |
-| `generate_video` | Text → video (async job, typically 1–5 min). Waits, saves the mp4, returns path. On timeout returns a resumable `polling_url`. |
+| `generate_video` | Text → video **or image → video** (async job, typically 1–5 min). Pass `first_frame_image` to animate an existing picture (image-to-video), `last_frame_image` for an end frame, or `reference_images` for style guidance. Needs an i2v-capable model (`bytedance/seedance-2.0`, `bytedance/seedance-2.0-fast`, `google/veo-3.1`). Waits, saves the mp4, returns path. On timeout returns a resumable `polling_url`. |
 | `check_video_status` | Resume waiting for a video job by `polling_url` / id; downloads when done. |
 | `list_models` | Lists image/video-capable model slugs with pricing, so the agent can pick a model. |
 | `check_config` | Diagnostics: key presence/validity, endpoint, defaults, output dir writability. Run this first if something fails. |
