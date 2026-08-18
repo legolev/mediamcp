@@ -1,4 +1,6 @@
 // Protocol smoke test: start dist/index.js on stdio, initialize, list tools.
+// Also asserts the advertised schema dialect, which is the only check that exercises
+// the real StdioServerTransport — the vitest suite runs over an in-memory pair.
 import { spawn } from "node:child_process";
 
 const EXPECTED_TOOLS = [
@@ -9,6 +11,8 @@ const EXPECTED_TOOLS = [
   "list_models",
   "check_config",
 ];
+
+const DIALECT_2020_12 = "https://json-schema.org/draft/2020-12/schema";
 
 const server = spawn("node", ["dist/index.js"], { stdio: ["pipe", "pipe", "inherit"] });
 const timeout = setTimeout(() => {
@@ -29,15 +33,24 @@ server.stdout.on("data", (chunk) => {
       continue;
     }
     if (message.id === 2) {
-      const names = (message.result?.tools ?? []).map((tool) => tool.name);
+      const tools = message.result?.tools ?? [];
+      const names = tools.map((tool) => tool.name);
       const missing = EXPECTED_TOOLS.filter((name) => !names.includes(name));
+      const wrongDialect = tools
+        .flatMap((tool) => [tool.inputSchema, tool.outputSchema].filter(Boolean).map((schema) => [tool, schema]))
+        .filter(([, schema]) => schema.$schema !== DIALECT_2020_12)
+        .map(([tool]) => tool.name);
       clearTimeout(timeout);
       server.kill();
       if (missing.length > 0) {
         console.error(`SMOKE FAIL: missing tools: ${missing.join(", ")}`);
         process.exit(1);
       }
-      console.log(`SMOKE OK: ${names.length} tools registered`);
+      if (wrongDialect.length > 0) {
+        console.error(`SMOKE FAIL: schemas not advertised as 2020-12: ${[...new Set(wrongDialect)].join(", ")}`);
+        process.exit(1);
+      }
+      console.log(`SMOKE OK: ${names.length} tools registered, schemas are JSON Schema 2020-12`);
       process.exit(0);
     }
   }

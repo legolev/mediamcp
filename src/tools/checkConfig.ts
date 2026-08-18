@@ -15,6 +15,7 @@ export interface Diagnostics {
   video_model: string;
   output_dir: string;
   output_dir_writable: boolean;
+  schema_dialect: string;
   api_key: string;
   api_key_source?: string;
   key_check?: string;
@@ -62,6 +63,7 @@ export async function collectDiagnostics(ctx: ToolContext, ping: boolean): Promi
     video_model: config.videoModel,
     output_dir: config.outputDir,
     output_dir_writable: writable,
+    schema_dialect: config.schemaDialect,
     api_key: config.apiKey ? maskKey(config.apiKey) : "not set",
     ...(config.apiKeySource ? { api_key_source: config.apiKeySource } : {}),
     ...(keyCheck !== undefined ? { key_check: keyCheck } : {}),
@@ -80,6 +82,7 @@ export function formatDiagnostics(diag: Diagnostics): string {
     `- default video model: ${diag.video_model}`,
     `- output dir: ${diag.output_dir} (${diag.output_dir_writable ? "writable" : "NOT WRITABLE"})`,
     `- preview: ${diag.preview}`,
+    `- tool schema dialect: ${diag.schema_dialect}`,
   ];
   for (const problem of diag.problems) lines.push(`PROBLEM: ${problem}`);
   return lines.join("\n");
@@ -104,6 +107,7 @@ export function registerCheckConfig(server: McpServer, ctx: ToolContext): void {
         video_model: z.string(),
         output_dir: z.string(),
         output_dir_writable: z.boolean(),
+        schema_dialect: z.string().describe("JSON Schema dialect the tool schemas are advertised in"),
         api_key: z.string().describe("Masked key or 'not set'"),
         api_key_source: z.string().optional(),
         key_check: z.string().optional(),

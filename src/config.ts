@@ -8,10 +8,12 @@ import {
   DEFAULT_IMAGE_MODEL,
   DEFAULT_PREVIEW_MAX_DIM,
   DEFAULT_REFERER,
+  DEFAULT_SCHEMA_DIALECT,
   DEFAULT_TIMEOUT_MS,
   DEFAULT_TITLE,
   DEFAULT_VIDEO_MODEL,
 } from "./constants.js";
+import { isSchemaDialect, type SchemaDialect } from "./schema/dialect.js";
 
 export interface Config {
   readonly apiKey: string | null;
@@ -26,6 +28,7 @@ export interface Config {
   readonly previewMaxDim: number;
   readonly referer: string;
   readonly title: string;
+  readonly schemaDialect: SchemaDialect;
   readonly version: string;
 }
 
@@ -44,6 +47,14 @@ function readNumber(raw: string | undefined, fallback: number): number {
   if (!raw) return fallback;
   const value = Number(raw);
   return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+/** Lenient about the spellings people actually type for a draft name. */
+function readDialect(raw: string | undefined): SchemaDialect {
+  const value = raw?.trim().toLowerCase();
+  if (!value) return DEFAULT_SCHEMA_DIALECT;
+  const alias = value === "draft-07" || value === "draft7" ? "draft-7" : value === "2020" ? "2020-12" : value;
+  return isSchemaDialect(alias) ? alias : DEFAULT_SCHEMA_DIALECT;
 }
 
 function readBool(raw: string | undefined, fallback: boolean): boolean {
@@ -73,6 +84,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     previewMaxDim: readNumber(env.MEDIAMCP_PREVIEW_MAX_DIM, DEFAULT_PREVIEW_MAX_DIM),
     referer: env.MEDIAMCP_REFERER?.trim() || DEFAULT_REFERER,
     title: env.MEDIAMCP_TITLE?.trim() || DEFAULT_TITLE,
+    schemaDialect: readDialect(env.MEDIAMCP_SCHEMA_DIALECT),
     version: packageJson.version,
   });
 }

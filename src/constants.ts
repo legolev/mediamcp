@@ -1,4 +1,5 @@
 import type { ModelInfo } from "./providers/types.js";
+import type { SchemaDialect } from "./schema/dialect.js";
 
 export const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
 export const DEFAULT_IMAGE_MODEL = "google/gemini-2.5-flash-image";
@@ -7,6 +8,8 @@ export const DEFAULT_TIMEOUT_MS = 120_000;
 export const DEFAULT_PREVIEW_MAX_DIM = 768;
 export const DEFAULT_REFERER = "https://github.com/legolev/mediamcp";
 export const DEFAULT_TITLE = "mediamcp";
+/** Advertise tool schemas as JSON Schema 2020-12; see src/schema/dialect.ts. */
+export const DEFAULT_SCHEMA_DIALECT: SchemaDialect = "2020-12";
 
 export const MAX_SOURCE_BYTES = 20 * 1024 * 1024;
 export const MAX_IMAGE_COUNT = 4;

@@ -139,6 +139,7 @@ Everything is configured through environment variables in the `env` block of you
 | `MEDIAMCP_TIMEOUT_MS` | `120000` | Per-request HTTP timeout. |
 | `MEDIAMCP_PREVIEW` | `true` | Return an inline preview image with each result (`false` = paths only). |
 | `MEDIAMCP_PREVIEW_MAX_DIM` | `768` | Longest side of the inline preview in pixels. |
+| `MEDIAMCP_SCHEMA_DIALECT` | `2020-12` | JSON Schema dialect the tool schemas are advertised in. Set to `draft-7` to emit the MCP SDK's native output instead. |
 
 ### Using a different provider
 
@@ -163,6 +164,7 @@ mediamcp automatically probes the endpoint's API shape: the dedicated `/images` 
    - **"Out of credits (HTTP 402)"** — top up at <https://openrouter.ai/credits>.
    - **"Not found (HTTP 404) … for model"** — the model slug is wrong; run `list_models`.
    - **Nothing happens in the client** — make sure Node.js ≥ 20 is installed (`node --version`).
+   - **"Tool '…' has an invalid outputSchema … unsupported dialect"** — the client validates schemas against JSON Schema 2020-12 only. mediamcp advertises 2020-12 by default, so this points at an old version; upgrade, and check `check_config` reports `tool schema dialect: 2020-12`.
 
 ## Development
 

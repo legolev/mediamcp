@@ -2,6 +2,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 
 import { loadConfig } from "./config.js";
 import { createProvider } from "./providers/index.js";
+import { withSchemaDialect } from "./schema/transport.js";
 import { buildServer } from "./server.js";
 import { collectDiagnostics, formatDiagnostics } from "./tools/checkConfig.js";
 
@@ -40,7 +41,7 @@ async function main(): Promise<void> {
   }
 
   const server = buildServer(config, createProvider(config));
-  await server.connect(new StdioServerTransport());
+  await server.connect(withSchemaDialect(new StdioServerTransport(), config.schemaDialect));
   // stdout is the protocol channel; all human-facing logs go to stderr.
   console.error(`mediamcp v${config.version} ready on stdio (endpoint: ${config.baseUrl})`);
 }
