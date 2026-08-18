@@ -139,6 +139,7 @@ claude mcp add mediamcp -e OPENROUTER_API_KEY=sk-or-v1-YOUR_KEY -- npx -y mediam
 | `MEDIAMCP_TIMEOUT_MS` | `120000` | HTTP-таймаут на один запрос. |
 | `MEDIAMCP_PREVIEW` | `true` | Возвращать встроенное превью вместе с каждым результатом (`false` — только пути). |
 | `MEDIAMCP_PREVIEW_MAX_DIM` | `768` | Длинная сторона встроенного превью в пикселях. |
+| `MEDIAMCP_SCHEMA_DIALECT` | `2020-12` | Диалект JSON Schema, в котором публикуются схемы инструментов. Значение `draft-7` отдаёт вывод MCP SDK как есть. |
 
 ### Использование другого провайдера
 
@@ -163,6 +164,7 @@ mediamcp сам определяет, какой формат API поддерж
    - **«Out of credits (HTTP 402)»** — пополните баланс на <https://openrouter.ai/credits>.
    - **«Not found (HTTP 404) … for model»** — неверный слаг модели; запустите `list_models`.
    - **В клиенте ничего не происходит** — убедитесь, что установлен Node.js ≥ 20 (`node --version`).
+   - **«Tool '…' has an invalid outputSchema … unsupported dialect»** — клиент проверяет схемы только по JSON Schema 2020-12. mediamcp публикует 2020-12 по умолчанию, так что ошибка означает старую версию: обновитесь и убедитесь, что `check_config` показывает `tool schema dialect: 2020-12`.
 
 ## Разработка
 
