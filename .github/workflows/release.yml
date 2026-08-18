@@ -3,6 +3,8 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # Lets a failed registry publish be retried without burning a version.
+  workflow_dispatch:
 
 jobs:
   publish:
@@ -20,6 +22,15 @@ jobs:
       # npm >= 11.5 supports OIDC Trusted Publishing natively.
       - run: npm install -g npm@latest
       - run: npm ci
+      - name: Verify package.json and server.json agree on the version
+        run: |
+          PKG=$(node -p "require('./package.json').version")
+          SRV=$(node -p "require('./server.json').version")
+          if [ "$PKG" != "$SRV" ]; then
+            echo "::error::package.json is $PKG but server.json is $SRV — run 'node scripts/sync-server-json.mjs'"
+            exit 1
+          fi
+          echo "version $PKG"
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
@@ -36,9 +47,18 @@ jobs:
           fi
       - if: steps.npm-check.outputs.skip == 'false'
         run: npm publish --access public
+      # Gated independently of npm: the two registries can get out of step, and a
+      # retry must be able to publish to one without republishing to the other.
       - name: Publish to MCP registry
-        if: steps.npm-check.outputs.skip == 'false'
         run: |
+          # Without pipefail a failing publisher would be masked by tee's exit status.
+          set -o pipefail
           curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
           ./mcp-publisher login github-oidc
-          ./mcp-publisher publish
+          if ! ./mcp-publisher publish 2>&1 | tee publish.log; then
+            if grep -q "cannot publish duplicate version" publish.log; then
+              echo "Already in the MCP registry — nothing to do."
+            else
+              exit 1
+            fi
+          fi

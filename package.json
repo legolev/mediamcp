@@ -26,6 +26,7 @@
     "test:watch": "vitest",
     "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
     "smoke": "node scripts/smoke.mjs",
+    "version": "node scripts/sync-server-json.mjs && git add server.json",
     "prepublishOnly": "npm run typecheck && npm run build && npm test"
   },
   "repository": {
