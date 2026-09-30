@@ -65,6 +65,45 @@ describe("generateImage", () => {
     expect((calls[0]!.init.headers as Record<string, string>).Authorization).toContain("sk-or-v1-testkey");
   });
 
+  it("passes GPT-image controls to /images/generations", async () => {
+    mockFetch(jsonResponse(404, {}), jsonResponse(200, { data: [{ b64_json: PNG_B64 }] }));
+    const provider = new OpenAiCompatibleProvider(config);
+    await provider.generateImage({
+      prompt: "an otter",
+      model: "gpt-image-2.5-flare",
+      size: "1536x864",
+      quality: "high",
+      background: "opaque",
+      outputFormat: "webp",
+      outputCompression: 80,
+      moderation: "low",
+    });
+
+    expect(new URL(calls[1]!.url).pathname).toBe("/api/v1/images/generations");
+    const body = bodyOf(calls[1]!);
+    expect(body).toMatchObject({
+      size: "1536x864",
+      quality: "high",
+      background: "opaque",
+      output_format: "webp",
+      output_compression: 80,
+      moderation: "low",
+    });
+    expect(body.aspect_ratio).toBeUndefined();
+    expect(body.outputCompression).toBeUndefined(); // snake_case on the wire
+  });
+
+  it("keeps OpenAI-only controls off the OpenRouter /images route", async () => {
+    mockFetch(jsonResponse(200, { data: [{ b64_json: PNG_B64 }] }));
+    const provider = new OpenAiCompatibleProvider(config);
+    await provider.generateImage({ prompt: "an otter", model: "m", size: "1536x864", quality: "high" });
+
+    expect(new URL(calls[0]!.url).pathname).toBe("/api/v1/images");
+    const body = bodyOf(calls[0]!);
+    expect(body.size).toBeUndefined();
+    expect(body.quality).toBeUndefined();
+  });
+
   it("falls back to chat/completions when image endpoints are missing, and remembers", async () => {
     const chatResponse = {
       choices: [{ message: { images: [{ image_url: { url: buildDataUrl("image/png", PNG_BYTES) } }] } }],

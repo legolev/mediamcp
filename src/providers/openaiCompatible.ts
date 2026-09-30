@@ -109,6 +109,10 @@ export class OpenAiCompatibleProvider implements MediaProvider {
         if (imageUrls.length > 0) {
           body.input_references = imageUrls.map((url) => ({ type: "image_url", image_url: { url } }));
         }
+      } else {
+        // OpenAI-specific controls go only to the classic endpoint; OpenRouter's
+        // /images route may reject unknown fields.
+        Object.assign(body, optionFields(req));
       }
       const path = strategy === "images" ? "/images" : "/images/generations";
       const json = await this.postJson(path, body, req.model);
@@ -413,6 +417,18 @@ export class OpenAiCompatibleProvider implements MediaProvider {
 
 function backoffMs(attempt: number): number {
   return 500 * 2 ** (attempt - 1) + Math.random() * 250;
+}
+
+/** Present GPT-image controls as an OpenAI API body fragment (snake_case, skip unset). */
+function optionFields(req: GenerateImageRequest): JsonRecord {
+  const body: JsonRecord = {};
+  if (req.size) body.size = req.size;
+  if (req.quality) body.quality = req.quality;
+  if (req.background) body.background = req.background;
+  if (req.outputFormat) body.output_format = req.outputFormat;
+  if (req.outputCompression !== undefined) body.output_compression = req.outputCompression;
+  if (req.moderation) body.moderation = req.moderation;
+  return body;
 }
 
 function sleep(ms: number): Promise<void> {

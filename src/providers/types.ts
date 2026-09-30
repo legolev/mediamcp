@@ -17,7 +17,19 @@ export interface BaseImageRequest {
   model: string;
 }
 
-export interface GenerateImageRequest extends BaseImageRequest {
+/** GPT-image output controls, honored by OpenAI-compatible /images/generations and /images/edits. */
+export interface ImageOptionFields {
+  /** Exact output size as WIDTHxHEIGHT, or "auto". */
+  size?: string;
+  /** low/medium/high (xhigh/max on gpt-image-2.5), standard/hd (dall-e-3). */
+  quality?: string;
+  background?: string;
+  outputFormat?: string;
+  outputCompression?: number;
+  moderation?: string;
+}
+
+export interface GenerateImageRequest extends BaseImageRequest, ImageOptionFields {
   aspectRatio?: string;
 }
 
