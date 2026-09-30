@@ -246,6 +246,30 @@ describe("editImage", () => {
     expect(new Uint8Array(await file.arrayBuffer())).toEqual(PNG_BYTES);
   });
 
+  it("uploads mask and GPT-image controls on the multipart edits request", async () => {
+    mockFetch(jsonResponse(404, {}), jsonResponse(200, { data: [{ b64_json: PNG_B64 }] }));
+    const provider = new OpenAiCompatibleProvider(config);
+    const source = buildDataUrl("image/png", PNG_BYTES);
+    await provider.editImage({
+      prompt: "extend the scene",
+      model: "m",
+      imageUrls: [source],
+      maskUrl: source,
+      size: "1024x1024",
+      quality: "high",
+      outputFormat: "png",
+      inputFidelity: "high",
+    });
+
+    expect(new URL(calls[1]!.url).pathname).toBe("/api/v1/images/edits");
+    const form = formOf(calls[1]!);
+    expect((form.get("mask") as File).name).toBe("mask.png");
+    expect(form.get("size")).toBe("1024x1024");
+    expect(form.get("quality")).toBe("high");
+    expect(form.get("output_format")).toBe("png");
+    expect(form.get("input_fidelity")).toBe("high");
+  });
+
   it("falls back to multimodal chat only when /images and /images/edits are both missing", async () => {
     mockFetch(
       jsonResponse(404, {}),

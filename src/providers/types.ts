@@ -33,9 +33,13 @@ export interface GenerateImageRequest extends BaseImageRequest, ImageOptionField
   aspectRatio?: string;
 }
 
-export interface EditImageRequest extends BaseImageRequest {
+export interface EditImageRequest extends BaseImageRequest, ImageOptionFields {
   /** data: or https: URLs, already normalized by media/sources. */
   imageUrls: string[];
+  /** Optional mask image (data: or https: URL); transparent pixels mark editable areas. */
+  maskUrl?: string;
+  /** "low" | "high": how closely to preserve the original input image(s). */
+  inputFidelity?: string;
 }
 
 export interface VideoFrameImage {

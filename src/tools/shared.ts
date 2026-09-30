@@ -95,6 +95,19 @@ export const moderationField = z
   .optional()
   .describe("Content-moderation level for GPT image models: 'low' is less restrictive, 'auto' is the default.");
 
+export const maskField = z
+  .string()
+  .optional()
+  .describe(
+    "Mask image (PNG; transparent pixels mark the editable areas). Accepts an absolute file path, " +
+      "https:// URL, or data: URL. Requires an OpenAI-compatible /images/edits endpoint; ignored elsewhere.",
+  );
+
+export const inputFidelityField = z
+  .enum(["low", "high"])
+  .optional()
+  .describe("How closely to preserve the original input image(s), on /images/edits (GPT image models).");
+
 // --- shared output schema for image tools --------------------------------------
 
 export const imageOutputShape = {

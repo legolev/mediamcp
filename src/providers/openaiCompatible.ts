@@ -97,7 +97,8 @@ export class OpenAiCompatibleProvider implements MediaProvider {
         : req.prompt;
 
     if (strategy === "edits") {
-      const form = await this.buildEditForm(req.model, prompt, imageUrls);
+      // "edits" is only reachable from editImage, so req carries imageUrls here.
+      const form = await this.buildEditForm(req as EditImageRequest, prompt);
       const json = await this.postForm("/images/edits", form, req.model);
       return this.parseImagesResponse(json, req.model);
     }
@@ -131,26 +132,32 @@ export class OpenAiCompatibleProvider implements MediaProvider {
     return this.parseChatResponse(json, req.model);
   }
 
-  /** Classic multipart /images/edits body: model, prompt, image file(s), optional mask. */
-  private async buildEditForm(model: string, prompt: string, imageUrls: string[]): Promise<FormData> {
+  /** Classic multipart /images/edits body: model, prompt, image file(s), mask, GPT-image controls. */
+  private async buildEditForm(req: EditImageRequest, prompt: string): Promise<FormData> {
     const form = new FormData();
-    form.set("model", model);
+    form.set("model", req.model);
     form.set("prompt", prompt);
-    const parts = await Promise.all(imageUrls.map((url, index) => this.imagePart(url, index + 1)));
+    const parts = await Promise.all(req.imageUrls.map((url, index) => this.imagePart(url, `image-${index + 1}`)));
     // OpenAI uses "image" for a single source and "image[]" for several.
     const field = parts.length > 1 ? "image[]" : "image";
     for (const part of parts) form.append(field, part.blob, part.filename);
+    if (req.maskUrl) {
+      const mask = await this.imagePart(req.maskUrl, "mask");
+      form.set("mask", mask.blob, mask.filename);
+    }
+    for (const [key, value] of Object.entries(optionFields(req))) form.set(key, String(value));
+    if (req.inputFidelity) form.set("input_fidelity", req.inputFidelity);
     return form;
   }
 
-  private async imagePart(url: string, index: number): Promise<{ blob: Blob; filename: string }> {
+  private async imagePart(url: string, name: string): Promise<{ blob: Blob; filename: string }> {
     const parsed = parseDataUrl(url);
     const bytes = parsed ? parsed.bytes : (await this.download(url)).bytes;
     const mime = parsed?.mime ?? sniffImageMime(bytes) ?? "image/png";
     return {
       // slice() gives the Blob a fresh ArrayBuffer (Uint8Array<ArrayBuffer>), not a shared view
       blob: new Blob([bytes.slice()], { type: mime }),
-      filename: `image-${index}.${extensionForMime(mime, "png")}`,
+      filename: `${name}.${extensionForMime(mime, "png")}`,
     };
   }
 
@@ -420,7 +427,7 @@ function backoffMs(attempt: number): number {
 }
 
 /** Present GPT-image controls as an OpenAI API body fragment (snake_case, skip unset). */
-function optionFields(req: GenerateImageRequest): JsonRecord {
+function optionFields(req: GenerateImageRequest | EditImageRequest): JsonRecord {
   const body: JsonRecord = {};
   if (req.size) body.size = req.size;
   if (req.quality) body.quality = req.quality;

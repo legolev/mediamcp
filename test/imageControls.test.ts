@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -93,5 +93,33 @@ describe("image tool controls", () => {
       output_compression: 80,
       moderation: "low",
     });
+  });
+
+  it("forwards edit_image mask and controls to the multipart /images/edits endpoint", async () => {
+    const sourceDir = await mkdtemp(path.join(tmpdir(), "mediamcp-src-"));
+    const sourcePath = path.join(sourceDir, "source.png");
+    const maskPath = path.join(sourceDir, "mask.png");
+    await writeFile(sourcePath, PNG_BYTES);
+    await writeFile(maskPath, PNG_BYTES);
+
+    mockFetch(jsonResponse(404, {}), jsonResponse(200, { data: [{ b64_json: PNG_B64 }] }));
+    const { result, text } = await callToolOnce("edit_image", {
+      prompt: "extend the scene",
+      images: [sourcePath],
+      mask: maskPath,
+      size: "1024x1024",
+      quality: "high",
+      input_fidelity: "high",
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(text).toContain("Saved image/png");
+    expect(new URL(calls[1]!.url).pathname).toBe("/api/v1/images/edits");
+    const form = calls[1]!.init.body as unknown as FormData;
+    expect(form.get("size")).toBe("1024x1024");
+    expect(form.get("quality")).toBe("high");
+    expect(form.get("input_fidelity")).toBe("high");
+    expect((form.get("mask") as File).name).toBe("mask.png");
+    expect((form.get("image") as File).name).toBe("image-1.png");
   });
 });
