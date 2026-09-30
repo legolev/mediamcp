@@ -1,7 +1,7 @@
 import type { Config } from "../config.js";
 import { CURATED_MODELS, MODELS_CACHE_TTL_MS } from "../constants.js";
 import { httpError, MediaMcpError } from "../errors.js";
-import { parseDataUrl, sniffImageMime } from "../media/dataUrl.js";
+import { parseDataUrl, extensionForMime, sniffImageMime } from "../media/dataUrl.js";
 import type {
   Download,
   EditImageRequest,
@@ -15,10 +15,10 @@ import type {
   VideoStatus,
 } from "./types.js";
 
-type ImageStrategy = "images" | "generations" | "chat";
+type ImageStrategy = "images" | "generations" | "edits" | "chat";
 
 const GENERATE_STRATEGIES: ImageStrategy[] = ["images", "generations", "chat"];
-const EDIT_STRATEGIES: ImageStrategy[] = ["images", "chat"];
+const EDIT_STRATEGIES: ImageStrategy[] = ["images", "edits", "chat"];
 const MAX_ATTEMPTS = 3;
 const MAX_RETRY_AFTER_MS = 15_000;
 
@@ -27,10 +27,11 @@ interface JsonRecord {
 }
 
 /**
- * Talks to OpenRouter or any OpenAI-compatible endpoint. Image calls probe
- * three API shapes in order — the dedicated /images endpoint (OpenRouter),
- * /images/generations (OpenAI classic), and /chat/completions with
- * modalities — and remember whichever works for the rest of the session.
+ * Talks to OpenRouter or any OpenAI-compatible endpoint. Calls probe several
+ * API shapes in order and remember whichever works for the rest of the session:
+ * generation tries /images (OpenRouter), /images/generations (OpenAI classic),
+ * then /chat/completions with modalities; editing tries /images, then the
+ * classic multipart /images/edits, then /chat/completions.
  */
 export class OpenAiCompatibleProvider implements MediaProvider {
   private generateStrategy: ImageStrategy | null = null;
@@ -54,7 +55,7 @@ export class OpenAiCompatibleProvider implements MediaProvider {
     return this.runImageStrategies(
       this.editStrategy ? [this.editStrategy] : EDIT_STRATEGIES,
       (strategy) => (this.editStrategy = strategy),
-      { prompt: req.prompt, model: req.model },
+      req,
       req.imageUrls,
     );
   }
@@ -62,7 +63,7 @@ export class OpenAiCompatibleProvider implements MediaProvider {
   private async runImageStrategies(
     strategies: ImageStrategy[],
     remember: (strategy: ImageStrategy) => void,
-    req: GenerateImageRequest,
+    req: GenerateImageRequest | EditImageRequest,
     imageUrls: string[],
   ): Promise<GeneratedImage> {
     let lastError: unknown;
@@ -84,20 +85,27 @@ export class OpenAiCompatibleProvider implements MediaProvider {
 
   private async runImageStrategy(
     strategy: ImageStrategy,
-    req: GenerateImageRequest,
+    req: GenerateImageRequest | EditImageRequest,
     imageUrls: string[],
   ): Promise<GeneratedImage> {
+    const aspectRatio = "aspectRatio" in req ? req.aspectRatio : undefined;
     // Only the dedicated /images endpoint takes aspect_ratio as a parameter;
     // for the other shapes the ratio is expressed in the prompt.
     const prompt =
-      req.aspectRatio && strategy !== "images"
-        ? `${req.prompt}\n\nRender the image with a ${req.aspectRatio} aspect ratio.`
+      aspectRatio && strategy !== "images"
+        ? `${req.prompt}\n\nRender the image with a ${aspectRatio} aspect ratio.`
         : req.prompt;
+
+    if (strategy === "edits") {
+      const form = await this.buildEditForm(req.model, prompt, imageUrls);
+      const json = await this.postForm("/images/edits", form, req.model);
+      return this.parseImagesResponse(json, req.model);
+    }
 
     if (strategy === "images" || strategy === "generations") {
       const body: JsonRecord = { model: req.model, prompt };
       if (strategy === "images") {
-        if (req.aspectRatio) body.aspect_ratio = req.aspectRatio;
+        if (aspectRatio) body.aspect_ratio = aspectRatio;
         if (imageUrls.length > 0) {
           body.input_references = imageUrls.map((url) => ({ type: "image_url", image_url: { url } }));
         }
@@ -117,6 +125,29 @@ export class OpenAiCompatibleProvider implements MediaProvider {
       req.model,
     );
     return this.parseChatResponse(json, req.model);
+  }
+
+  /** Classic multipart /images/edits body: model, prompt, image file(s), optional mask. */
+  private async buildEditForm(model: string, prompt: string, imageUrls: string[]): Promise<FormData> {
+    const form = new FormData();
+    form.set("model", model);
+    form.set("prompt", prompt);
+    const parts = await Promise.all(imageUrls.map((url, index) => this.imagePart(url, index + 1)));
+    // OpenAI uses "image" for a single source and "image[]" for several.
+    const field = parts.length > 1 ? "image[]" : "image";
+    for (const part of parts) form.append(field, part.blob, part.filename);
+    return form;
+  }
+
+  private async imagePart(url: string, index: number): Promise<{ blob: Blob; filename: string }> {
+    const parsed = parseDataUrl(url);
+    const bytes = parsed ? parsed.bytes : (await this.download(url)).bytes;
+    const mime = parsed?.mime ?? sniffImageMime(bytes) ?? "image/png";
+    return {
+      // slice() gives the Blob a fresh ArrayBuffer (Uint8Array<ArrayBuffer>), not a shared view
+      blob: new Blob([bytes.slice()], { type: mime }),
+      filename: `image-${index}.${extensionForMime(mime, "png")}`,
+    };
   }
 
   private async parseImagesResponse(json: JsonRecord, model: string): Promise<GeneratedImage> {
@@ -278,10 +309,14 @@ export class OpenAiCompatibleProvider implements MediaProvider {
   // --- transport --------------------------------------------------------------
 
   private headers(): Record<string, string> {
+    return { ...this.authHeaders(), "Content-Type": "application/json" };
+  }
+
+  /** Auth + attribution only; multipart requests must set their own Content-Type (boundary). */
+  private authHeaders(): Record<string, string> {
     this.requireKey();
     return {
       Authorization: `Bearer ${this.config.apiKey}`,
-      "Content-Type": "application/json",
       "HTTP-Referer": this.config.referer,
       "X-Title": this.config.title,
     };
@@ -300,6 +335,15 @@ export class OpenAiCompatibleProvider implements MediaProvider {
     const response = await this.fetchWithRetry(
       `${this.config.baseUrl}${path}`,
       { method: "POST", headers: this.headers(), body: JSON.stringify(body) },
+      model,
+    );
+    return (await response.json()) as JsonRecord;
+  }
+
+  private async postForm(path: string, form: FormData, model?: string): Promise<JsonRecord> {
+    const response = await this.fetchWithRetry(
+      `${this.config.baseUrl}${path}`,
+      { method: "POST", headers: this.authHeaders(), body: form },
       model,
     );
     return (await response.json()) as JsonRecord;

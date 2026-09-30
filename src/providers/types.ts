@@ -12,15 +12,16 @@ export interface ModelInfo {
   recommended?: boolean;
 }
 
-export interface GenerateImageRequest {
+export interface BaseImageRequest {
   prompt: string;
   model: string;
+}
+
+export interface GenerateImageRequest extends BaseImageRequest {
   aspectRatio?: string;
 }
 
-export interface EditImageRequest {
-  prompt: string;
-  model: string;
+export interface EditImageRequest extends BaseImageRequest {
   /** data: or https: URLs, already normalized by media/sources. */
   imageUrls: string[];
 }
