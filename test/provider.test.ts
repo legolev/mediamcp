@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { loadConfig } from "../src/config.js";
+import { MAX_SOURCE_BYTES } from "../src/constants.js";
 import { buildDataUrl } from "../src/media/dataUrl.js";
 import { OpenAiCompatibleProvider } from "../src/providers/openaiCompatible.js";
 
@@ -245,9 +246,55 @@ describe("editImage", () => {
     await provider.editImage({ prompt: "p", model: "m", imageUrls: ["https://cdn.example.com/pic.png"] });
 
     expect(calls[1]!.url).toBe("https://cdn.example.com/pic.png");
-    expect((calls[1]!.init.headers as Record<string, string>).Authorization).toBeUndefined();
+    expect(calls[1]!.init.redirect).toBe("error");
+    expect((calls[1]!.init.headers as Record<string, string> | undefined)?.Authorization).toBeUndefined();
     const file = formOf(calls[2]!).get("image") as File;
     expect(new Uint8Array(await file.arrayBuffer())).toEqual(PNG_BYTES);
+  });
+
+  it("rejects a source that is not an image instead of uploading it as image/png", async () => {
+    mockFetch(
+      jsonResponse(404, {}),
+      new Response("just text", { status: 200, headers: { "content-type": "image/png" } }),
+    );
+    const provider = new OpenAiCompatibleProvider(customConfig);
+    await expect(
+      provider.editImage({ prompt: "p", model: "m", imageUrls: ["https://cdn.example.com/notes.txt"] }),
+    ).rejects.toThrow(/is not a PNG, JPEG, WebP, or GIF image/);
+    expect(calls).toHaveLength(2); // no multipart POST, no chat fallback
+  });
+
+  it("reports a source download failure as a status-less MediaMcpError", async () => {
+    mockFetch(jsonResponse(404, {}), jsonResponse(403, { error: "denied" }));
+    const provider = new OpenAiCompatibleProvider(customConfig);
+    const error = await provider
+      .editImage({ prompt: "p", model: "m", imageUrls: ["https://cdn.example.com/secret.png"] })
+      .catch((e: Error) => e);
+
+    expect(String(error)).toContain("Failed to fetch source image https://cdn.example.com: HTTP 403");
+    expect(String(error)).not.toContain("openrouter.ai/keys");
+    expect((error as { status?: number }).status).toBeUndefined();
+    expect(calls.map((c) => new URL(c.url).pathname)).toEqual(["/v1/images", "/secret.png"]);
+  });
+
+  it("does not silently fall back to chat when the source download 404s", async () => {
+    mockFetch(jsonResponse(404, {}), jsonResponse(404, {}));
+    const provider = new OpenAiCompatibleProvider(customConfig);
+    await expect(
+      provider.editImage({ prompt: "p", model: "m", imageUrls: ["https://cdn.example.com/gone.png"] }),
+    ).rejects.toThrow(/Failed to fetch source image https:\/\/cdn\.example\.com: HTTP 404/);
+    expect(calls).toHaveLength(2); // no multipart POST, no chat fallback
+  });
+
+  it("caps source downloads at MAX_SOURCE_BYTES", async () => {
+    const tooBig = new Uint8Array(MAX_SOURCE_BYTES + 1);
+    tooBig.set([0x89, 0x50, 0x4e, 0x47], 0); // valid PNG magic, still over the cap
+    mockFetch(jsonResponse(404, {}), new Response(tooBig, { status: 200, headers: { "content-type": "image/png" } }));
+    const provider = new OpenAiCompatibleProvider(customConfig);
+    await expect(
+      provider.editImage({ prompt: "p", model: "m", imageUrls: ["https://cdn.example.com/huge.png"] }),
+    ).rejects.toThrow(/exceeds the 20 MB limit/);
+    expect(calls).toHaveLength(2);
   });
 
   it("uploads mask and GPT-image controls on the multipart edits request", async () => {

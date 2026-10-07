@@ -1,5 +1,5 @@
 import type { Config } from "../config.js";
-import { CURATED_MODELS, MODELS_CACHE_TTL_MS } from "../constants.js";
+import { CURATED_MODELS, MAX_SOURCE_BYTES, MODELS_CACHE_TTL_MS } from "../constants.js";
 import { httpError, MediaMcpError } from "../errors.js";
 import { parseDataUrl, extensionForMime, sniffImageMime } from "../media/dataUrl.js";
 import type {
@@ -23,6 +23,7 @@ const EDIT_STRATEGIES: ImageStrategy[] = ["images", "edits", "chat"];
 const OPENROUTER_EDIT_STRATEGIES: ImageStrategy[] = ["images", "chat"];
 const MAX_ATTEMPTS = 3;
 const MAX_RETRY_AFTER_MS = 15_000;
+const MAX_SOURCE_MB = Math.round(MAX_SOURCE_BYTES / 1024 / 1024);
 
 interface JsonRecord {
   [key: string]: unknown;
@@ -160,13 +161,45 @@ export class OpenAiCompatibleProvider implements MediaProvider {
 
   private async imagePart(url: string, name: string): Promise<{ blob: Blob; filename: string }> {
     const parsed = parseDataUrl(url);
-    const bytes = parsed ? parsed.bytes : (await this.download(url)).bytes;
-    const mime = parsed?.mime ?? sniffImageMime(bytes) ?? "image/png";
+    const bytes = parsed ? parsed.bytes : await this.fetchSource(url);
+    const mime = parsed ? parsed.mime : sniffImageMime(bytes)!;
     return {
       // slice() gives the Blob a fresh ArrayBuffer (Uint8Array<ArrayBuffer>), not a shared view
       blob: new Blob([bytes.slice()], { type: mime }),
       filename: `${name}.${extensionForMime(mime, "png")}`,
     };
+  }
+
+  /**
+   * Fetch an https source for multipart upload. This runs on the MCP host, so it is
+   * deliberately stricter than download(): no redirects (an https source must not
+   * bounce to plain http/localhost/private hosts), no auth headers, no retries, the
+   * size cap, and the bytes must sniff as a real image. Errors carry no HTTP status
+   * so they never look like an API failure or trigger a strategy fallback.
+   */
+  private async fetchSource(url: string): Promise<Uint8Array> {
+    const origin = safeOrigin(url);
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: "GET",
+        redirect: "error",
+        signal: AbortSignal.timeout(this.config.timeoutMs),
+      });
+    } catch (error) {
+      throw new MediaMcpError(`Failed to fetch source image ${origin}: ${(error as Error).message}`);
+    }
+    if (!response.ok) {
+      throw new MediaMcpError(`Failed to fetch source image ${origin}: HTTP ${response.status}`);
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.length > MAX_SOURCE_BYTES) {
+      throw new MediaMcpError(`Source image ${origin} exceeds the ${MAX_SOURCE_MB} MB limit.`);
+    }
+    if (!sniffImageMime(bytes)) {
+      throw new MediaMcpError(`Source image ${origin} is not a PNG, JPEG, WebP, or GIF image.`);
+    }
+    return bytes;
   }
 
   private async parseImagesResponse(json: JsonRecord, model: string): Promise<GeneratedImage> {
