@@ -36,19 +36,58 @@ async function fileToDataUrl(filePath: string): Promise<string> {
   return buildDataUrl(mime, bytes);
 }
 
-async function localUrlToDataUrl(url: URL): Promise<string> {
-  const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+export interface FetchSourceOptions {
+  /** "error" forbids redirects (host-fetched https sources); defaults to "follow" (localhost URLs). */
+  redirect?: "follow" | "error" | "manual";
+  timeoutMs?: number;
+  /** Fall back to the response Content-Type when the magic bytes don't match a known image format. */
+  trustContentType?: boolean;
+}
+
+/**
+ * Fetch a remote image source on the host, size-capped and validated. This is the one
+ * host-side source fetch: edit_image uses it with redirect: "error" for https sources,
+ * loadImageSource uses it with the Content-Type fallback for localhost URLs. Errors are
+ * status-less MediaMcpError so callers never mistake them for an API failure.
+ */
+export async function fetchSourceImage(
+  url: string | URL,
+  options: FetchSourceOptions = {},
+): Promise<{ bytes: Uint8Array; mime: string }> {
+  let target: URL;
+  try {
+    target = typeof url === "string" ? new URL(url) : url;
+  } catch {
+    throw new MediaMcpError(`Failed to fetch source image ${String(url)}: invalid URL.`);
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(target, {
+      method: "GET",
+      redirect: options.redirect ?? "follow",
+      signal: AbortSignal.timeout(options.timeoutMs ?? 30_000),
+    });
+  } catch (error) {
+    throw new MediaMcpError(`Failed to fetch source image ${target.origin}: ${(error as Error).message}`);
+  }
   if (!response.ok) {
-    throw new MediaMcpError(`Failed to fetch source image ${url.href}: HTTP ${response.status}.`);
+    throw new MediaMcpError(`Failed to fetch source image ${target.origin}: HTTP ${response.status}.`);
   }
   const bytes = new Uint8Array(await response.arrayBuffer());
   if (bytes.length > MAX_SOURCE_BYTES) {
-    throw new MediaMcpError(`Source image ${url.href} exceeds the ${MAX_MB} MB limit.`);
+    throw new MediaMcpError(`Source image ${target.origin} exceeds the ${MAX_MB} MB limit.`);
   }
-  const mime = sniffImageMime(bytes) ?? response.headers.get("content-type")?.split(";")[0] ?? null;
+  const fallback = options.trustContentType ? response.headers.get("content-type")?.split(";")[0] ?? null : null;
+  const mime = sniffImageMime(bytes) ?? fallback;
   if (!mime || !mime.startsWith("image/")) {
-    throw new MediaMcpError(`${url.href} did not return an image.`);
+    throw new MediaMcpError(`Source image ${target.origin} is not a PNG, JPEG, WebP, or GIF image.`);
   }
+  return { bytes, mime };
+}
+
+async function localUrlToDataUrl(url: URL): Promise<string> {
+  const { bytes, mime } = await fetchSourceImage(url, { trustContentType: true });
   return buildDataUrl(mime, bytes);
 }
 
