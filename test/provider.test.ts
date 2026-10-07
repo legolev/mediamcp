@@ -315,6 +315,30 @@ describe("editImage", () => {
     ]);
   });
 
+  it("tries chat when /images/edits rejects the model with 400", async () => {
+    mockFetch(
+      jsonResponse(404, {}),
+      jsonResponse(400, { error: { message: "model does not support edits" } }),
+      jsonResponse(200, {
+        choices: [{ message: { images: [{ image_url: { url: buildDataUrl("image/png", PNG_BYTES) } }] } }],
+      }),
+    );
+    const provider = new OpenAiCompatibleProvider(customConfig);
+    const source = buildDataUrl("image/png", PNG_BYTES);
+    const image = await provider.editImage({
+      prompt: "make it night",
+      model: "google/gemini-2.5-flash-image",
+      imageUrls: [source],
+    });
+
+    expect(image.mime).toBe("image/png");
+    expect(calls.map((c) => new URL(c.url).pathname)).toEqual([
+      "/v1/images",
+      "/v1/images/edits",
+      "/v1/chat/completions",
+    ]);
+  });
+
   it("falls back to multimodal chat only when /images and /images/edits are both missing", async () => {
     mockFetch(
       jsonResponse(404, {}),

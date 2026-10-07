@@ -79,7 +79,13 @@ export class OpenAiCompatibleProvider implements MediaProvider {
         lastError = error;
         const status = error instanceof MediaMcpError ? error.status : undefined;
         const endpointMissing = status === 404 || status === 405;
-        if (!endpointMissing || i === strategies.length - 1) throw error;
+        // While probing, a gateway may reject multipart edits for a model it cannot
+        // edit that way (400/415/422) or fail transiently (5xx); chat can still work.
+        // Auth, credits, and rate limits stay fatal.
+        const editsUnusable =
+          strategy === "edits" &&
+          (status === 400 || status === 415 || status === 422 || (status !== undefined && status >= 500));
+        if ((!endpointMissing && !editsUnusable) || i === strategies.length - 1) throw error;
       }
     }
     throw lastError;
