@@ -12,7 +12,6 @@ import {
   imageToolResult,
   inputFidelityField,
   maskField,
-  moderationField,
   modelField,
   outputCompressionField,
   outputDirField,
@@ -52,7 +51,6 @@ export function registerEditImage(server: McpServer, ctx: ToolContext): void {
         background: backgroundField,
         output_format: outputFormatField,
         output_compression: outputCompressionField,
-        moderation: moderationField,
         input_fidelity: inputFidelityField,
         output_dir: outputDirField,
         filename_prefix: filenamePrefixField,
@@ -70,7 +68,6 @@ export function registerEditImage(server: McpServer, ctx: ToolContext): void {
       background,
       output_format,
       output_compression,
-      moderation,
       input_fidelity,
       output_dir,
       filename_prefix,
@@ -91,7 +88,6 @@ export function registerEditImage(server: McpServer, ctx: ToolContext): void {
           ...(background ? { background } : {}),
           ...(output_format ? { outputFormat: output_format } : {}),
           ...(output_compression !== undefined ? { outputCompression: output_compression } : {}),
-          ...(moderation ? { moderation } : {}),
           ...(input_fidelity ? { inputFidelity: input_fidelity } : {}),
         });
         return await imageToolResult(ctx, "edit", [result], [], {

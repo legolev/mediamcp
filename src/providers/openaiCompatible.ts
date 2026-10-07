@@ -123,6 +123,7 @@ export class OpenAiCompatibleProvider implements MediaProvider {
         // OpenAI-specific controls go only to the classic endpoint; OpenRouter's
         // /images route may reject unknown fields.
         Object.assign(body, optionFields(req));
+        if ("moderation" in req && req.moderation) body.moderation = req.moderation;
       }
       const path = strategy === "images" ? "/images" : "/images/generations";
       const json = await this.postJson(path, body, req.model);
@@ -467,7 +468,7 @@ function backoffMs(attempt: number): number {
   return 500 * 2 ** (attempt - 1) + Math.random() * 250;
 }
 
-/** Present GPT-image controls as an OpenAI API body fragment (snake_case, skip unset). */
+  /** Shared GPT-image controls: an OpenAI API body fragment (snake_case, skip unset). */
 function optionFields(req: GenerateImageRequest | EditImageRequest): JsonRecord {
   const body: JsonRecord = {};
   if (req.size) body.size = req.size;
@@ -475,7 +476,6 @@ function optionFields(req: GenerateImageRequest | EditImageRequest): JsonRecord 
   if (req.background) body.background = req.background;
   if (req.outputFormat) body.output_format = req.outputFormat;
   if (req.outputCompression !== undefined) body.output_compression = req.outputCompression;
-  if (req.moderation) body.moderation = req.moderation;
   return body;
 }
 

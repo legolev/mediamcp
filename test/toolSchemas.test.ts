@@ -93,4 +93,14 @@ describe("advertised tool schemas", () => {
     expect(input.required).toContain("prompt");
     expect(input.properties?.prompt).toMatchObject({ type: "string" });
   });
+
+  it("advertises moderation on generate_image only", async () => {
+    const tools = await advertisedTools("2020-12");
+    const properties = (name: string) =>
+      (tools.find((tool) => tool.name === name)?.inputSchema as { properties?: Record<string, unknown> })
+        .properties;
+
+    expect(properties("generate_image")?.moderation).toBeDefined();
+    expect(properties("edit_image")?.moderation).toBeUndefined();
+  });
 });

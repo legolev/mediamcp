@@ -118,7 +118,7 @@ Once installed, just ask your agent things like *“generate a hero image for my
 | Tool | What it does |
 | --- | --- |
 | `generate_image` | Text → image(s). Saves to disk, returns path + inline preview. Supports `count` (up to 4 variations), `aspect_ratio`, `model` override, and the GPT-image controls `size`, `quality`, `background`, `output_format`, `output_compression`, `moderation` on OpenAI-compatible endpoints. |
-| `edit_image` | Existing image(s) + instruction → edited image. Accepts file paths, `https://` or `data:` URLs; multiple sources for composition edits. On OpenAI-compatible endpoints also supports `mask` (transparent areas are editable), `input_fidelity`, and the same GPT-image controls as `generate_image`. |
+| `edit_image` | Existing image(s) + instruction → edited image. Accepts file paths, `https://` or `data:` URLs; multiple sources for composition edits. On OpenAI-compatible endpoints also supports `mask` (transparent areas are editable), `input_fidelity`, and the GPT-image controls `size`, `quality`, `background`, `output_format`, `output_compression` (`moderation` is generate-only). |
 | `generate_video` | Text → video **or image → video** (async job, typically 1–5 min). Pass `first_frame_image` to animate an existing picture (image-to-video), `last_frame_image` for an end frame, or `reference_images` for style guidance. Needs an i2v-capable model (`bytedance/seedance-2.0`, `bytedance/seedance-2.0-fast`, `google/veo-3.1`). Waits, saves the mp4, returns path. On timeout returns a resumable `polling_url`. |
 | `check_video_status` | Resume waiting for a video job by `polling_url` / id; downloads when done. |
 | `list_models` | Lists image/video-capable model slugs with pricing, so the agent can pick a model. |
@@ -153,7 +153,7 @@ Point `MEDIAMCP_BASE_URL` at any OpenAI-compatible endpoint and set the matching
 }
 ```
 
-mediamcp automatically probes the endpoint's API shape and remembers whichever works first. Generation tries the dedicated `/images` endpoint (OpenRouter), `/images/generations` (OpenAI classic), then `chat/completions` with image modalities; editing tries `/images`, then the classic multipart `/images/edits`, then `chat/completions`. The GPT-image controls (`size`, `quality`, `background`, `output_format`, `output_compression`, `moderation`, `mask`, `input_fidelity`) are sent to the classic OpenAI endpoints that support them and ignored elsewhere.
+mediamcp automatically probes the endpoint's API shape and remembers whichever works first. Generation tries the dedicated `/images` endpoint (OpenRouter), `/images/generations` (OpenAI classic), then `chat/completions` with image modalities; editing tries `/images`, then the classic multipart `/images/edits` (skipped on OpenRouter, which edits through `/images`), then `chat/completions`. The GPT-image controls (`size`, `quality`, `background`, `output_format`, `output_compression`, `moderation`, `mask`, `input_fidelity`) are sent to the classic OpenAI endpoints that support them (`moderation` only to `/images/generations`, `mask`/`input_fidelity` only to `/images/edits`) and ignored elsewhere.
 
 ## Troubleshooting
 

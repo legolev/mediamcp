@@ -123,6 +123,7 @@ describe("image tool controls", () => {
     expect(form.get("size")).toBe("1024x1024");
     expect(form.get("quality")).toBe("high");
     expect(form.get("input_fidelity")).toBe("high");
+    expect(form.get("moderation")).toBeNull(); // /images/edits has no moderation parameter
     expect((form.get("mask") as File).name).toBe("mask.png");
     expect((form.get("image") as File).name).toBe("image-1.png");
   });

@@ -26,11 +26,12 @@ export interface ImageOptionFields {
   background?: string;
   outputFormat?: string;
   outputCompression?: number;
-  moderation?: string;
 }
 
 export interface GenerateImageRequest extends BaseImageRequest, ImageOptionFields {
   aspectRatio?: string;
+  /** Content-moderation level ("auto" | "low"); /images/generations only. */
+  moderation?: string;
 }
 
 export interface EditImageRequest extends BaseImageRequest, ImageOptionFields {
