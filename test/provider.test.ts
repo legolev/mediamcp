@@ -8,6 +8,10 @@ const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a
 const PNG_B64 = Buffer.from(PNG_BYTES).toString("base64");
 
 const config = loadConfig({ OPENROUTER_API_KEY: "sk-or-v1-testkey-0123456789" });
+const customConfig = loadConfig({
+  MEDIAMCP_API_KEY: "sk-test-0123456789",
+  MEDIAMCP_BASE_URL: "https://api.example.com/v1",
+});
 
 type MockCall = { url: string; init: RequestInit };
 
@@ -193,12 +197,12 @@ describe("editImage", () => {
 
   it("uploads multipart to /images/edits when the dedicated /images endpoint is missing", async () => {
     mockFetch(jsonResponse(404, {}), jsonResponse(200, { data: [{ b64_json: PNG_B64 }] }));
-    const provider = new OpenAiCompatibleProvider(config);
+    const provider = new OpenAiCompatibleProvider(customConfig);
     const source = buildDataUrl("image/png", PNG_BYTES);
     const image = await provider.editImage({ prompt: "make it night", model: "m", imageUrls: [source] });
 
     expect(image.mime).toBe("image/png");
-    expect(new URL(calls[1]!.url).pathname).toBe("/api/v1/images/edits");
+    expect(new URL(calls[1]!.url).pathname).toBe("/v1/images/edits");
     const form = formOf(calls[1]!);
     expect(form).toBeInstanceOf(FormData);
     expect(form.get("model")).toBe("m");
@@ -208,7 +212,7 @@ describe("editImage", () => {
     expect(file.type).toBe("image/png");
     expect(new Uint8Array(await file.arrayBuffer())).toEqual(PNG_BYTES);
     const headers = calls[1]!.init.headers as Record<string, string>;
-    expect(headers.Authorization).toContain("sk-or-v1-testkey");
+    expect(headers.Authorization).toContain("sk-test-0123456789");
     expect(headers["Content-Type"]).toBeUndefined(); // fetch sets the multipart boundary itself
   });
 
@@ -218,7 +222,7 @@ describe("editImage", () => {
       jsonResponse(200, { data: [{ b64_json: PNG_B64 }] }),
       jsonResponse(200, { data: [{ b64_json: PNG_B64 }] }),
     );
-    const provider = new OpenAiCompatibleProvider(config);
+    const provider = new OpenAiCompatibleProvider(customConfig);
     const source = buildDataUrl("image/png", PNG_BYTES);
     await provider.editImage({ prompt: "combine", model: "m", imageUrls: [source, source] });
 
@@ -228,7 +232,7 @@ describe("editImage", () => {
     // Second edit skips the probes entirely.
     await provider.editImage({ prompt: "again", model: "m", imageUrls: [source] });
     expect(calls).toHaveLength(3);
-    expect(new URL(calls[2]!.url).pathname).toBe("/api/v1/images/edits");
+    expect(new URL(calls[2]!.url).pathname).toBe("/v1/images/edits");
   });
 
   it("downloads https sources for multipart upload without leaking the key", async () => {
@@ -237,7 +241,7 @@ describe("editImage", () => {
       new Response(PNG_BYTES, { status: 200, headers: { "content-type": "image/png" } }),
       jsonResponse(200, { data: [{ b64_json: PNG_B64 }] }),
     );
-    const provider = new OpenAiCompatibleProvider(config);
+    const provider = new OpenAiCompatibleProvider(customConfig);
     await provider.editImage({ prompt: "p", model: "m", imageUrls: ["https://cdn.example.com/pic.png"] });
 
     expect(calls[1]!.url).toBe("https://cdn.example.com/pic.png");
@@ -248,7 +252,7 @@ describe("editImage", () => {
 
   it("uploads mask and GPT-image controls on the multipart edits request", async () => {
     mockFetch(jsonResponse(404, {}), jsonResponse(200, { data: [{ b64_json: PNG_B64 }] }));
-    const provider = new OpenAiCompatibleProvider(config);
+    const provider = new OpenAiCompatibleProvider(customConfig);
     const source = buildDataUrl("image/png", PNG_BYTES);
     await provider.editImage({
       prompt: "extend the scene",
@@ -261,7 +265,7 @@ describe("editImage", () => {
       inputFidelity: "high",
     });
 
-    expect(new URL(calls[1]!.url).pathname).toBe("/api/v1/images/edits");
+    expect(new URL(calls[1]!.url).pathname).toBe("/v1/images/edits");
     const form = formOf(calls[1]!);
     expect((form.get("mask") as File).name).toBe("mask.png");
     expect(form.get("size")).toBe("1024x1024");
@@ -270,9 +274,32 @@ describe("editImage", () => {
     expect(form.get("input_fidelity")).toBe("high");
   });
 
-  it("falls back to multimodal chat only when /images and /images/edits are both missing", async () => {
+  it("falls back to multimodal chat content when /images is missing", async () => {
     mockFetch(
       jsonResponse(404, {}),
+      jsonResponse(200, {
+        choices: [{ message: { images: [{ image_url: { url: buildDataUrl("image/png", PNG_BYTES) } }] } }],
+      }),
+    );
+    const provider = new OpenAiCompatibleProvider(config);
+    const source = "https://example.com/pic.png";
+    await provider.editImage({ prompt: "make it night", model: "m", imageUrls: [source] });
+
+    expect(new URL(calls[1]!.url).pathname).toBe("/api/v1/chat/completions");
+    const body = bodyOf(calls[1]!);
+    expect(body.messages).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "make it night" },
+          { type: "image_url", image_url: { url: source } },
+        ],
+      },
+    ]);
+  });
+
+  it("never probes /images/edits on OpenRouter (config.isOpenRouter)", async () => {
+    mockFetch(
       jsonResponse(404, {}),
       jsonResponse(200, {
         choices: [{ message: { images: [{ image_url: { url: buildDataUrl("image/png", PNG_BYTES) } }] } }],
@@ -284,8 +311,26 @@ describe("editImage", () => {
 
     expect(calls.map((c) => new URL(c.url).pathname)).toEqual([
       "/api/v1/images",
-      "/api/v1/images/edits",
       "/api/v1/chat/completions",
+    ]);
+  });
+
+  it("falls back to multimodal chat only when /images and /images/edits are both missing", async () => {
+    mockFetch(
+      jsonResponse(404, {}),
+      jsonResponse(404, {}),
+      jsonResponse(200, {
+        choices: [{ message: { images: [{ image_url: { url: buildDataUrl("image/png", PNG_BYTES) } }] } }],
+      }),
+    );
+    const provider = new OpenAiCompatibleProvider(customConfig);
+    const source = buildDataUrl("image/png", PNG_BYTES);
+    await provider.editImage({ prompt: "make it night", model: "m", imageUrls: [source] });
+
+    expect(calls.map((c) => new URL(c.url).pathname)).toEqual([
+      "/v1/images",
+      "/v1/images/edits",
+      "/v1/chat/completions",
     ]);
     const body = bodyOf(calls[2]!);
     expect(body.messages).toEqual([

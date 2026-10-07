@@ -42,10 +42,10 @@ afterEach(() => {
 });
 
 /** Boot the real server over an in-memory pair, run one tool call, tear down. */
-async function callToolOnce(name: string, args: Record<string, unknown>) {
+async function callToolOnce(name: string, args: Record<string, unknown>, env: Record<string, string> = {}) {
   const outputDir = await mkdtemp(path.join(tmpdir(), "mediamcp-test-"));
   const config = {
-    ...loadConfig({ MEDIAMCP_API_KEY: "sk-test-0123456789", MEDIAMCP_PREVIEW: "false" }),
+    ...loadConfig({ MEDIAMCP_API_KEY: "sk-test-0123456789", MEDIAMCP_PREVIEW: "false", ...env }),
     outputDir,
   };
   const server = buildServer(config, createProvider(config));
@@ -103,18 +103,22 @@ describe("image tool controls", () => {
     await writeFile(maskPath, PNG_BYTES);
 
     mockFetch(jsonResponse(404, {}), jsonResponse(200, { data: [{ b64_json: PNG_B64 }] }));
-    const { result, text } = await callToolOnce("edit_image", {
-      prompt: "extend the scene",
-      images: [sourcePath],
-      mask: maskPath,
-      size: "1024x1024",
-      quality: "high",
-      input_fidelity: "high",
-    });
+    const { result, text } = await callToolOnce(
+      "edit_image",
+      {
+        prompt: "extend the scene",
+        images: [sourcePath],
+        mask: maskPath,
+        size: "1024x1024",
+        quality: "high",
+        input_fidelity: "high",
+      },
+      { MEDIAMCP_BASE_URL: "https://api.example.com/v1" },
+    );
 
     expect(result.isError).toBeFalsy();
     expect(text).toContain("Saved image/png");
-    expect(new URL(calls[1]!.url).pathname).toBe("/api/v1/images/edits");
+    expect(new URL(calls[1]!.url).pathname).toBe("/v1/images/edits");
     const form = calls[1]!.init.body as unknown as FormData;
     expect(form.get("size")).toBe("1024x1024");
     expect(form.get("quality")).toBe("high");

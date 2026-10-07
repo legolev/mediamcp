@@ -19,6 +19,8 @@ type ImageStrategy = "images" | "generations" | "edits" | "chat";
 
 const GENERATE_STRATEGIES: ImageStrategy[] = ["images", "generations", "chat"];
 const EDIT_STRATEGIES: ImageStrategy[] = ["images", "edits", "chat"];
+/** OpenRouter's /images handles editing; probing multipart /images/edits there only costs a round trip. */
+const OPENROUTER_EDIT_STRATEGIES: ImageStrategy[] = ["images", "chat"];
 const MAX_ATTEMPTS = 3;
 const MAX_RETRY_AFTER_MS = 15_000;
 
@@ -31,7 +33,7 @@ interface JsonRecord {
  * API shapes in order and remember whichever works for the rest of the session:
  * generation tries /images (OpenRouter), /images/generations (OpenAI classic),
  * then /chat/completions with modalities; editing tries /images, then the
- * classic multipart /images/edits, then /chat/completions.
+ * classic multipart /images/edits (classic endpoints only), then /chat/completions.
  */
 export class OpenAiCompatibleProvider implements MediaProvider {
   private generateStrategy: ImageStrategy | null = null;
@@ -52,12 +54,12 @@ export class OpenAiCompatibleProvider implements MediaProvider {
   }
 
   async editImage(req: EditImageRequest): Promise<GeneratedImage> {
-    return this.runImageStrategies(
-      this.editStrategy ? [this.editStrategy] : EDIT_STRATEGIES,
-      (strategy) => (this.editStrategy = strategy),
-      req,
-      req.imageUrls,
-    );
+    const strategies = this.editStrategy
+      ? [this.editStrategy]
+      : this.config.isOpenRouter
+        ? OPENROUTER_EDIT_STRATEGIES
+        : EDIT_STRATEGIES;
+    return this.runImageStrategies(strategies, (strategy) => (this.editStrategy = strategy), req, req.imageUrls);
   }
 
   private async runImageStrategies(
