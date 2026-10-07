@@ -53,6 +53,61 @@ export const countField = z
   .default(1)
   .describe(`Number of variations to generate (1-${MAX_IMAGE_COUNT}, parallel requests, billed per image).`);
 
+// --- GPT-image output controls (OpenAI-compatible endpoints only) --------------
+
+export const sizeField = z
+  .string()
+  .optional()
+  .describe(
+    "Exact output size as WIDTHxHEIGHT, e.g. '1536x864', or 'auto'. Width and height must be divisible " +
+      "by 16 with a ratio between 1:3 and 3:1; standard sizes are 1024x1024, 1536x1024, 1024x1536. " +
+      "Honored by OpenAI-compatible /images/generations and /images/edits endpoints; ignored elsewhere.",
+  );
+
+export const qualityField = z
+  .enum(["auto", "standard", "hd", "low", "medium", "high", "xhigh", "max"])
+  .optional()
+  .describe(
+    "Output quality. GPT image models: low/medium/high, plus xhigh/max on gpt-image-2.5 models; " +
+      "dall-e-3: standard/hd. Honored by OpenAI-compatible /images endpoints; ignored elsewhere.",
+  );
+
+export const backgroundField = z
+  .enum(["auto", "transparent", "opaque"])
+  .optional()
+  .describe("Output background. 'transparent' requires output_format png or webp. GPT image models only.");
+
+export const outputFormatField = z
+  .enum(["png", "jpeg", "webp"])
+  .optional()
+  .describe("Output image format (GPT image models). Defaults to png.");
+
+export const outputCompressionField = z
+  .number()
+  .int()
+  .min(0)
+  .max(100)
+  .optional()
+  .describe("Compression level 0-100 for jpeg/webp output (GPT image models). Defaults to 100.");
+
+export const moderationField = z
+  .enum(["auto", "low"])
+  .optional()
+  .describe("Content-moderation level for GPT image models: 'low' is less restrictive, 'auto' is the default.");
+
+export const maskField = z
+  .string()
+  .optional()
+  .describe(
+    "Mask image (PNG; transparent pixels mark the editable areas). Accepts an absolute file path, " +
+      "https:// URL, or data: URL. Requires an OpenAI-compatible /images/edits endpoint; ignored elsewhere.",
+  );
+
+export const inputFidelityField = z
+  .enum(["low", "high"])
+  .optional()
+  .describe("How closely to preserve the original input image(s), on /images/edits (GPT image models).");
+
 // --- shared output schema for image tools --------------------------------------
 
 export const imageOutputShape = {

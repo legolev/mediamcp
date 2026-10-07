@@ -1,7 +1,8 @@
 import type { Config } from "../config.js";
 import { CURATED_MODELS, MODELS_CACHE_TTL_MS } from "../constants.js";
 import { httpError, MediaMcpError } from "../errors.js";
-import { parseDataUrl, sniffImageMime } from "../media/dataUrl.js";
+import { parseDataUrl, extensionForMime, sniffImageMime } from "../media/dataUrl.js";
+import { fetchSourceImage } from "../media/sources.js";
 import type {
   Download,
   EditImageRequest,
@@ -15,10 +16,12 @@ import type {
   VideoStatus,
 } from "./types.js";
 
-type ImageStrategy = "images" | "generations" | "chat";
+type ImageStrategy = "images" | "generations" | "edits" | "chat";
 
 const GENERATE_STRATEGIES: ImageStrategy[] = ["images", "generations", "chat"];
-const EDIT_STRATEGIES: ImageStrategy[] = ["images", "chat"];
+const EDIT_STRATEGIES: ImageStrategy[] = ["images", "edits", "chat"];
+/** OpenRouter's /images handles editing; probing multipart /images/edits there only costs a round trip. */
+const OPENROUTER_EDIT_STRATEGIES: ImageStrategy[] = ["images", "chat"];
 const MAX_ATTEMPTS = 3;
 const MAX_RETRY_AFTER_MS = 15_000;
 
@@ -27,10 +30,11 @@ interface JsonRecord {
 }
 
 /**
- * Talks to OpenRouter or any OpenAI-compatible endpoint. Image calls probe
- * three API shapes in order — the dedicated /images endpoint (OpenRouter),
- * /images/generations (OpenAI classic), and /chat/completions with
- * modalities — and remember whichever works for the rest of the session.
+ * Talks to OpenRouter or any OpenAI-compatible endpoint. Calls probe several
+ * API shapes in order and remember whichever works for the rest of the session:
+ * generation tries /images (OpenRouter), /images/generations (OpenAI classic),
+ * then /chat/completions with modalities; editing tries /images, then the
+ * classic multipart /images/edits (classic endpoints only), then /chat/completions.
  */
 export class OpenAiCompatibleProvider implements MediaProvider {
   private generateStrategy: ImageStrategy | null = null;
@@ -51,18 +55,18 @@ export class OpenAiCompatibleProvider implements MediaProvider {
   }
 
   async editImage(req: EditImageRequest): Promise<GeneratedImage> {
-    return this.runImageStrategies(
-      this.editStrategy ? [this.editStrategy] : EDIT_STRATEGIES,
-      (strategy) => (this.editStrategy = strategy),
-      { prompt: req.prompt, model: req.model },
-      req.imageUrls,
-    );
+    const strategies = this.editStrategy
+      ? [this.editStrategy]
+      : this.config.isOpenRouter
+        ? OPENROUTER_EDIT_STRATEGIES
+        : EDIT_STRATEGIES;
+    return this.runImageStrategies(strategies, (strategy) => (this.editStrategy = strategy), req, req.imageUrls);
   }
 
   private async runImageStrategies(
     strategies: ImageStrategy[],
     remember: (strategy: ImageStrategy) => void,
-    req: GenerateImageRequest,
+    req: GenerateImageRequest | EditImageRequest,
     imageUrls: string[],
   ): Promise<GeneratedImage> {
     let lastError: unknown;
@@ -76,7 +80,13 @@ export class OpenAiCompatibleProvider implements MediaProvider {
         lastError = error;
         const status = error instanceof MediaMcpError ? error.status : undefined;
         const endpointMissing = status === 404 || status === 405;
-        if (!endpointMissing || i === strategies.length - 1) throw error;
+        // While probing, a gateway may reject multipart edits for a model it cannot
+        // edit that way (400/415/422) or fail transiently (5xx); chat can still work.
+        // Auth, credits, and rate limits stay fatal.
+        const editsUnusable =
+          strategy === "edits" &&
+          (status === 400 || status === 415 || status === 422 || (status !== undefined && status >= 500));
+        if ((!endpointMissing && !editsUnusable) || i === strategies.length - 1) throw error;
       }
     }
     throw lastError;
@@ -84,23 +94,36 @@ export class OpenAiCompatibleProvider implements MediaProvider {
 
   private async runImageStrategy(
     strategy: ImageStrategy,
-    req: GenerateImageRequest,
+    req: GenerateImageRequest | EditImageRequest,
     imageUrls: string[],
   ): Promise<GeneratedImage> {
+    const aspectRatio = "aspectRatio" in req ? req.aspectRatio : undefined;
     // Only the dedicated /images endpoint takes aspect_ratio as a parameter;
     // for the other shapes the ratio is expressed in the prompt.
     const prompt =
-      req.aspectRatio && strategy !== "images"
-        ? `${req.prompt}\n\nRender the image with a ${req.aspectRatio} aspect ratio.`
+      aspectRatio && strategy !== "images"
+        ? `${req.prompt}\n\nRender the image with a ${aspectRatio} aspect ratio.`
         : req.prompt;
+
+    if (strategy === "edits") {
+      // "edits" is only reachable from editImage, so req carries imageUrls here.
+      const form = await this.buildEditForm(req as EditImageRequest, prompt);
+      const json = await this.postForm("/images/edits", form, req.model);
+      return this.parseImagesResponse(json, req.model);
+    }
 
     if (strategy === "images" || strategy === "generations") {
       const body: JsonRecord = { model: req.model, prompt };
       if (strategy === "images") {
-        if (req.aspectRatio) body.aspect_ratio = req.aspectRatio;
+        if (aspectRatio) body.aspect_ratio = aspectRatio;
         if (imageUrls.length > 0) {
           body.input_references = imageUrls.map((url) => ({ type: "image_url", image_url: { url } }));
         }
+      } else {
+        // OpenAI-specific controls go only to the classic endpoint; OpenRouter's
+        // /images route may reject unknown fields.
+        Object.assign(body, optionFields(req));
+        if ("moderation" in req && req.moderation) body.moderation = req.moderation;
       }
       const path = strategy === "images" ? "/images" : "/images/generations";
       const json = await this.postJson(path, body, req.model);
@@ -117,6 +140,38 @@ export class OpenAiCompatibleProvider implements MediaProvider {
       req.model,
     );
     return this.parseChatResponse(json, req.model);
+  }
+
+  /** Classic multipart /images/edits body: model, prompt, image file(s), mask, GPT-image controls. */
+  private async buildEditForm(req: EditImageRequest, prompt: string): Promise<FormData> {
+    const form = new FormData();
+    form.set("model", req.model);
+    form.set("prompt", prompt);
+    const parts = await Promise.all(req.imageUrls.map((url, index) => this.imagePart(url, `image-${index + 1}`)));
+    // OpenAI uses "image" for a single source and "image[]" for several.
+    const field = parts.length > 1 ? "image[]" : "image";
+    for (const part of parts) form.append(field, part.blob, part.filename);
+    if (req.maskUrl) {
+      const mask = await this.imagePart(req.maskUrl, "mask");
+      form.set("mask", mask.blob, mask.filename);
+    }
+    for (const [key, value] of Object.entries(optionFields(req))) form.set(key, String(value));
+    if (req.inputFidelity) form.set("input_fidelity", req.inputFidelity);
+    return form;
+  }
+
+  private async imagePart(url: string, name: string): Promise<{ blob: Blob; filename: string }> {
+    const parsed = parseDataUrl(url);
+    // Host-fetched https sources: no redirects (an https source must not bounce to plain
+    // http/localhost/private hosts), no auth headers, no retries, size-capped, sniffed.
+    const { bytes, mime } = parsed
+      ? { bytes: parsed.bytes, mime: parsed.mime }
+      : await fetchSourceImage(url, { redirect: "error", timeoutMs: this.config.timeoutMs });
+    return {
+      // slice() gives the Blob a fresh ArrayBuffer (Uint8Array<ArrayBuffer>), not a shared view
+      blob: new Blob([bytes.slice()], { type: mime }),
+      filename: `${name}.${extensionForMime(mime, "png")}`,
+    };
   }
 
   private async parseImagesResponse(json: JsonRecord, model: string): Promise<GeneratedImage> {
@@ -278,10 +333,14 @@ export class OpenAiCompatibleProvider implements MediaProvider {
   // --- transport --------------------------------------------------------------
 
   private headers(): Record<string, string> {
+    return { ...this.authHeaders(), "Content-Type": "application/json" };
+  }
+
+  /** Auth + attribution only; multipart requests must set their own Content-Type (boundary). */
+  private authHeaders(): Record<string, string> {
     this.requireKey();
     return {
       Authorization: `Bearer ${this.config.apiKey}`,
-      "Content-Type": "application/json",
       "HTTP-Referer": this.config.referer,
       "X-Title": this.config.title,
     };
@@ -300,6 +359,15 @@ export class OpenAiCompatibleProvider implements MediaProvider {
     const response = await this.fetchWithRetry(
       `${this.config.baseUrl}${path}`,
       { method: "POST", headers: this.headers(), body: JSON.stringify(body) },
+      model,
+    );
+    return (await response.json()) as JsonRecord;
+  }
+
+  private async postForm(path: string, form: FormData, model?: string): Promise<JsonRecord> {
+    const response = await this.fetchWithRetry(
+      `${this.config.baseUrl}${path}`,
+      { method: "POST", headers: this.authHeaders(), body: form },
       model,
     );
     return (await response.json()) as JsonRecord;
@@ -369,6 +437,17 @@ export class OpenAiCompatibleProvider implements MediaProvider {
 
 function backoffMs(attempt: number): number {
   return 500 * 2 ** (attempt - 1) + Math.random() * 250;
+}
+
+  /** Shared GPT-image controls: an OpenAI API body fragment (snake_case, skip unset). */
+function optionFields(req: GenerateImageRequest | EditImageRequest): JsonRecord {
+  const body: JsonRecord = {};
+  if (req.size) body.size = req.size;
+  if (req.quality) body.quality = req.quality;
+  if (req.background) body.background = req.background;
+  if (req.outputFormat) body.output_format = req.outputFormat;
+  if (req.outputCompression !== undefined) body.output_compression = req.outputCompression;
+  return body;
 }
 
 function sleep(ms: number): Promise<void> {

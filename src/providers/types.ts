@@ -12,17 +12,35 @@ export interface ModelInfo {
   recommended?: boolean;
 }
 
-export interface GenerateImageRequest {
+export interface BaseImageRequest {
   prompt: string;
   model: string;
-  aspectRatio?: string;
 }
 
-export interface EditImageRequest {
-  prompt: string;
-  model: string;
+/** GPT-image output controls, honored by OpenAI-compatible /images/generations and /images/edits. */
+export interface ImageOptionFields {
+  /** Exact output size as WIDTHxHEIGHT, or "auto". */
+  size?: string;
+  /** low/medium/high (xhigh/max on gpt-image-2.5), standard/hd (dall-e-3). */
+  quality?: string;
+  background?: string;
+  outputFormat?: string;
+  outputCompression?: number;
+}
+
+export interface GenerateImageRequest extends BaseImageRequest, ImageOptionFields {
+  aspectRatio?: string;
+  /** Content-moderation level ("auto" | "low"); /images/generations only. */
+  moderation?: string;
+}
+
+export interface EditImageRequest extends BaseImageRequest, ImageOptionFields {
   /** data: or https: URLs, already normalized by media/sources. */
   imageUrls: string[];
+  /** Optional mask image (data: or https: URL); transparent pixels mark editable areas. */
+  maskUrl?: string;
+  /** "low" | "high": how closely to preserve the original input image(s). */
+  inputFidelity?: string;
 }
 
 export interface VideoFrameImage {
