@@ -1,6 +1,8 @@
 export interface GeneratedImage {
   bytes: Uint8Array;
   mime: string;
+  /** Set only when the endpoint's model list forced a substitution for the requested slug. */
+  model?: string;
 }
 
 export interface ModelInfo {

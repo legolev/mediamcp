@@ -140,6 +140,136 @@ describe("generateImage", () => {
     expect(new URL(calls[3]!.url).pathname).toBe("/api/v1/chat/completions");
   });
 
+  it("falls through a rejected /images/generations shape to chat (400)", async () => {
+    mockFetch(
+      jsonResponse(404, {}),
+      jsonResponse(400, { error: { message: "upstream does not support this route" } }),
+      jsonResponse(200, {
+        choices: [{ message: { images: [{ image_url: { url: buildDataUrl("image/png", PNG_BYTES) } }] } }],
+      }),
+    );
+    const provider = new OpenAiCompatibleProvider(customConfig);
+    const image = await provider.generateImage({ prompt: "a fox", model: "nano-banana" });
+
+    expect(image.mime).toBe("image/png");
+    expect(calls.map((c) => new URL(c.url).pathname)).toEqual([
+      "/v1/images",
+      "/v1/images/generations",
+      "/v1/chat/completions",
+    ]);
+  });
+
+  it("reads an image embedded as markdown data URL in chat content", async () => {
+    const markdown = `Here you go:\n\n![image](${buildDataUrl("image/png", PNG_BYTES)})`;
+    mockFetch(
+      jsonResponse(404, {}),
+      jsonResponse(404, {}),
+      jsonResponse(200, { choices: [{ message: { content: markdown } }] }),
+    );
+    const provider = new OpenAiCompatibleProvider(customConfig);
+    const image = await provider.generateImage({ prompt: "a fox", model: "nano-banana" });
+
+    expect(image.mime).toBe("image/png");
+    expect(Buffer.from(image.bytes)).toEqual(Buffer.from(PNG_BYTES));
+  });
+
+  it("reads an image part from an array-shaped chat content", async () => {
+    mockFetch(
+      jsonResponse(404, {}),
+      jsonResponse(404, {}),
+      jsonResponse(200, {
+        choices: [
+          {
+            message: {
+              content: [
+                { type: "text", text: "done" },
+                { type: "image_url", image_url: { url: buildDataUrl("image/png", PNG_BYTES) } },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+    const provider = new OpenAiCompatibleProvider(customConfig);
+    const image = await provider.generateImage({ prompt: "a fox", model: "nano-banana" });
+
+    expect(image.mime).toBe("image/png");
+    expect(Buffer.from(image.bytes)).toEqual(Buffer.from(PNG_BYTES));
+  });
+
+  it("retries chat without modalities when the gateway rejects the field", async () => {
+    mockFetch(
+      jsonResponse(404, {}),
+      jsonResponse(404, {}),
+      jsonResponse(400, { error: { message: "unknown field: modalities" } }),
+      jsonResponse(200, {
+        choices: [{ message: { images: [{ image_url: { url: buildDataUrl("image/png", PNG_BYTES) } }] } }],
+      }),
+    );
+    const provider = new OpenAiCompatibleProvider(customConfig);
+    await provider.generateImage({ prompt: "a fox", model: "nano-banana" });
+
+    expect(bodyOf(calls[2]!).modalities).toEqual(["image", "text"]);
+    expect(bodyOf(calls[3]!).modalities).toBeUndefined();
+    expect(bodyOf(calls[3]!).messages).toEqual(bodyOf(calls[2]!).messages);
+  });
+
+  it("keeps 401 fatal instead of probing other shapes", async () => {
+    mockFetch(jsonResponse(401, { error: "bad key" }));
+    const provider = new OpenAiCompatibleProvider(customConfig);
+    await expect(provider.generateImage({ prompt: "x", model: "m" })).rejects.toThrow(/Authentication failed/);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("retries with an endpoint-discovered image model when the requested slug 404s", async () => {
+    const chatOk = () =>
+      jsonResponse(200, {
+        choices: [{ message: { images: [{ image_url: { url: buildDataUrl("image/png", PNG_BYTES) } }] } }],
+      });
+    mockFetch(
+      jsonResponse(404, {}),
+      jsonResponse(404, {}),
+      jsonResponse(404, {}),
+      jsonResponse(200, { data: [{ id: "vendor/banana-2.1" }, { id: "vendor/viduq3" }] }),
+      jsonResponse(404, {}),
+      jsonResponse(404, {}),
+      chatOk(),
+    );
+    const provider = new OpenAiCompatibleProvider(customConfig);
+    const image = await provider.generateImage({ prompt: "a fox", model: "google/gemini-2.5-flash-image" });
+
+    expect(image.model).toBe("vendor/banana-2.1");
+    expect(calls[3]!.url).toBe("https://api.example.com/v1/models");
+    expect(bodyOf(calls[6]!).model).toBe("vendor/banana-2.1");
+  });
+
+  it("substitutes when a 5xx body reports model_not_found (not just 404)", async () => {
+    vi.useFakeTimers();
+    try {
+      const missing = () => jsonResponse(503, { error: { code: "model_not_found", message: "model does not exist" } });
+      mockFetch(
+        missing(),
+        missing(),
+        missing(),
+        jsonResponse(200, { data: [{ id: "vendor/banana-2.1" }] }),
+        jsonResponse(404, {}),
+        jsonResponse(404, {}),
+        jsonResponse(200, {
+          choices: [{ message: { images: [{ image_url: { url: buildDataUrl("image/png", PNG_BYTES) } }] } }],
+        }),
+      );
+      const provider = new OpenAiCompatibleProvider(customConfig);
+      const pending = provider.generateImage({ prompt: "x", model: "google/gemini-2.5-flash-image" });
+      await vi.runAllTimersAsync();
+      const image = await pending;
+
+      expect(image.model).toBe("vendor/banana-2.1");
+      expect(bodyOf(calls[calls.length - 1]!).model).toBe("vendor/banana-2.1");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("surfaces the model's refusal text when chat returns no image", async () => {
     mockFetch(
       jsonResponse(404, {}),
@@ -519,6 +649,26 @@ describe("listModels", () => {
     const again = await provider.listModels();
     expect(again).toBe(models);
     expect(calls).toHaveLength(1);
+  });
+
+  it("infers media types from slugs when the endpoint omits architecture metadata", async () => {
+    mockFetch(
+      jsonResponse(200, {
+        data: [
+          { id: "gpt-image-2.5-sunburst" },
+          { id: "gemini-nano-banana-2.1" },
+          { id: "viduq3" },
+          { id: "some-text-model" },
+        ],
+      }),
+    );
+    const provider = new OpenAiCompatibleProvider(customConfig);
+    const models = await provider.listModels();
+    expect(models?.map((m) => `${m.type}:${m.id}`)).toEqual([
+      "image:gemini-nano-banana-2.1",
+      "image:gpt-image-2.5-sunburst",
+      "video:viduq3",
+    ]);
   });
 
   it("returns null when the endpoint has no /models", async () => {

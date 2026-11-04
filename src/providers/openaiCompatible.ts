@@ -25,6 +25,19 @@ const OPENROUTER_EDIT_STRATEGIES: ImageStrategy[] = ["images", "chat"];
 const MAX_ATTEMPTS = 3;
 const MAX_RETRY_AFTER_MS = 15_000;
 
+/** Media URLs that gateways commonly embed in a chat message instead of message.images. */
+const MD_IMAGE_RE = /!\[[^\]]*\]\(\s*(data:image\/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=]+|https?:\/\/[^)\s]+)\s*\)/i;
+const HTML_IMAGE_RE = /<img[^>]+src=["']([^"']+)["']/i;
+const BARE_DATA_URL_RE = /data:image\/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/i;
+const DATA_URL_IN_TEXT_RE = /data:[a-z0-9.+-]+\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi;
+/** Gateways report a missing model as 404, or as 5xx with a model_not_found body. */
+const MODEL_MISSING_RE = /model_not_found|model[^.]{0,60}(does not exist|not found)/i;
+
+/** Model slugs that identify a media family when the endpoint omits architecture metadata. */
+const IMAGE_ID_RE =
+  /(image|imagen|dall-?e|flux|seedream|seededit|banana|stable-?diffusion|sdxl|sd3|kolors|ideogram|recraft|riverflow|photon|qwen-image|gpt-image|midjourney|krea|playground)/i;
+const VIDEO_ID_RE = /(video|veo|sora|kling|seedance|hailuo|vidu|runway|pika|ltx|mochi|cosmos|wan2)/i;
+
 interface JsonRecord {
   [key: string]: unknown;
 }
@@ -46,21 +59,75 @@ export class OpenAiCompatibleProvider implements MediaProvider {
   // --- images ---------------------------------------------------------------
 
   async generateImage(req: GenerateImageRequest): Promise<GeneratedImage> {
-    return this.runImageStrategies(
-      this.generateStrategy ? [this.generateStrategy] : GENERATE_STRATEGIES,
-      (strategy) => (this.generateStrategy = strategy),
-      req,
-      [],
+    return this.withModelFallback(req, (next) =>
+      this.runImageStrategies(
+        this.generateStrategy ? [this.generateStrategy] : GENERATE_STRATEGIES,
+        (strategy) => (this.generateStrategy = strategy),
+        next,
+        [],
+      ),
     );
   }
 
   async editImage(req: EditImageRequest): Promise<GeneratedImage> {
-    const strategies = this.editStrategy
-      ? [this.editStrategy]
-      : this.config.isOpenRouter
-        ? OPENROUTER_EDIT_STRATEGIES
-        : EDIT_STRATEGIES;
-    return this.runImageStrategies(strategies, (strategy) => (this.editStrategy = strategy), req, req.imageUrls);
+    const strategies = () =>
+      this.editStrategy
+        ? [this.editStrategy]
+        : this.config.isOpenRouter
+          ? OPENROUTER_EDIT_STRATEGIES
+          : EDIT_STRATEGIES;
+    return this.withModelFallback(req, (next) =>
+      this.runImageStrategies(strategies(), (strategy) => (this.editStrategy = strategy), next, next.imageUrls),
+    );
+  }
+
+  /**
+   * A configured default model is usually an OpenRouter slug, so on a different
+   * endpoint it 404s. When the endpoint publishes a model list and the requested
+   * slug is not on it, retry with the closest listed image model and report that
+   * model back to the caller.
+   */
+  private async withModelFallback<Req extends { model: string }>(
+    req: Req,
+    run: (req: Req) => Promise<GeneratedImage>,
+  ): Promise<GeneratedImage> {
+    try {
+      return await run(req);
+    } catch (error) {
+      for (const model of await this.replacementModels(req.model, error)) {
+        try {
+          const image = await run({ ...req, model });
+          return { ...image, model };
+        } catch {
+          // Try the next candidate; if everything fails the original error still
+          // names the model the caller asked for.
+        }
+      }
+      throw error;
+    }
+  }
+
+  private async replacementModels(requested: string, error: unknown): Promise<string[]> {
+    // On OpenRouter a missing slug is a typo, not a dialect mismatch.
+    if (this.config.isOpenRouter || !isMissingModel(error)) return [];
+    const models = await this.listModels().catch(() => null);
+    if (!models || models.some((model) => model.id === requested)) return [];
+    const images = models.filter((model) => model.type === "image").map((model) => model.id);
+    if (images.length === 0) return [];
+    // Prefer the same family under a different id shape ("vendor/gemini-x-image"
+    // vs "gemini-x-image") before falling back to whichever image model exists.
+    const base = requested.split("/").pop()?.toLowerCase() ?? "";
+    const exact = images.filter((id) => id.toLowerCase() === base);
+    const partial = images.filter(
+      (id) => id.toLowerCase() !== base && base.length > 0 && id.toLowerCase().includes(base),
+    );
+    // Classic OpenAI gpt-image/dall-e slugs are the safest bet that an endpoint
+    // speaks /images/generations; everything else is a last-resort candidate.
+    const classic = images.filter((id) => /gpt-image|dall-?e/i.test(id));
+    const ordered = [...exact, ...partial, ...classic, ...images];
+    const unique: string[] = [];
+    for (const id of ordered) if (!unique.includes(id)) unique.push(id);
+    return unique.slice(0, 2);
   }
 
   private async runImageStrategies(
@@ -79,14 +146,13 @@ export class OpenAiCompatibleProvider implements MediaProvider {
       } catch (error) {
         lastError = error;
         const status = error instanceof MediaMcpError ? error.status : undefined;
+        // Gateways disagree about how to reject a shape they don't implement: some
+        // 404/405, others 400/415/422, others 5xx. While probing, try the next shape;
+        // auth, credits, and rate limits stay fatal.
         const endpointMissing = status === 404 || status === 405;
-        // While probing, a gateway may reject multipart edits for a model it cannot
-        // edit that way (400/415/422) or fail transiently (5xx); chat can still work.
-        // Auth, credits, and rate limits stay fatal.
-        const editsUnusable =
-          strategy === "edits" &&
-          (status === 400 || status === 415 || status === 422 || (status !== undefined && status >= 500));
-        if ((!endpointMissing && !editsUnusable) || i === strategies.length - 1) throw error;
+        const shapeRejected =
+          status === 400 || status === 415 || status === 422 || (status !== undefined && status >= 500);
+        if ((!endpointMissing && !shapeRejected) || i === strategies.length - 1) throw error;
       }
     }
     throw lastError;
@@ -134,11 +200,17 @@ export class OpenAiCompatibleProvider implements MediaProvider {
       imageUrls.length > 0
         ? [{ type: "text", text: prompt }, ...imageUrls.map((url) => ({ type: "image_url", image_url: { url } }))]
         : prompt;
-    const json = await this.postJson(
-      "/chat/completions",
-      { model: req.model, messages: [{ role: "user", content }], modalities: ["image", "text"] },
-      req.model,
-    );
+    const body: JsonRecord = { model: req.model, messages: [{ role: "user", content }] };
+    let json: JsonRecord;
+    try {
+      // OpenRouter needs `modalities` to return an image; some OpenAI-compatible
+      // gateways reject the field outright, so retry once without it.
+      json = await this.postJson("/chat/completions", { ...body, modalities: ["image", "text"] }, req.model);
+    } catch (error) {
+      const status = error instanceof MediaMcpError ? error.status : undefined;
+      if (status !== 400 && status !== 415 && status !== 422) throw error;
+      json = await this.postJson("/chat/completions", body, req.model);
+    }
     return this.parseChatResponse(json, req.model);
   }
 
@@ -193,7 +265,7 @@ export class OpenAiCompatibleProvider implements MediaProvider {
     );
   }
 
-  private parseChatResponse(json: JsonRecord, model: string): GeneratedImage {
+  private async parseChatResponse(json: JsonRecord, model: string): Promise<GeneratedImage> {
     const choices = json.choices;
     const message = Array.isArray(choices) ? ((choices[0] as JsonRecord | undefined)?.message as JsonRecord | undefined) : undefined;
     if (!message) {
@@ -201,17 +273,25 @@ export class OpenAiCompatibleProvider implements MediaProvider {
     }
     const images = Array.isArray(message.images) ? message.images : [];
     const first = images[0] as JsonRecord | undefined;
-    const url = (first?.image_url as JsonRecord | undefined)?.url;
-    if (typeof url !== "string") {
-      const refusal = typeof message.content === "string" && message.content ? message.content : "<no content>";
+    const imageUrl = first?.image_url;
+    const candidate =
+      (typeof imageUrl === "string" ? imageUrl : undefined) ??
+      (typeof (imageUrl as JsonRecord | undefined)?.url === "string" ? ((imageUrl as JsonRecord).url as string) : undefined) ??
+      (typeof first?.url === "string" ? first.url : undefined) ??
+      firstImageUrl(message.content);
+    if (!candidate) {
       throw new MediaMcpError(
-        `Model '${model}' did not return an image and said: ${refusal}. ` +
+        `Model '${model}' did not return an image and said: ${summarizeContent(message.content)}. ` +
           `Rephrase the prompt, or run list_models and try an image-capable model.`,
       );
     }
-    const parsed = parseDataUrl(url);
-    if (!parsed) throw new MediaMcpError(`Model '${model}' returned an unparsable image URL.`);
-    return { bytes: parsed.bytes, mime: parsed.mime };
+    const parsed = parseDataUrl(candidate);
+    if (parsed) return { bytes: parsed.bytes, mime: parsed.mime };
+    if (/^https?:\/\//i.test(candidate)) {
+      const download = await this.download(candidate);
+      return { bytes: download.bytes, mime: download.mime ?? sniffImageMime(download.bytes) ?? "image/png" };
+    }
+    throw new MediaMcpError(`Model '${model}' returned an unparsable image URL.`);
   }
 
   // --- models ---------------------------------------------------------------
@@ -235,8 +315,12 @@ export class OpenAiCompatibleProvider implements MediaProvider {
       const id = typeof entry.id === "string" ? entry.id : null;
       const architecture = entry.architecture as JsonRecord | undefined;
       const outputs = Array.isArray(architecture?.output_modalities) ? architecture.output_modalities : [];
-      const type = outputs.includes("video") ? "video" : outputs.includes("image") ? "image" : null;
-      if (!id || !type) continue;
+      const declared = outputs.includes("video") ? "video" : outputs.includes("image") ? "image" : null;
+      if (!id) continue;
+      // Plain OpenAI-compatible gateways often return only { id }; infer the family
+      // from the slug instead of dropping every model.
+      const type = declared ?? inferModelType(id);
+      if (!type) continue;
       const pricing = entry.pricing as JsonRecord | undefined;
       const perImage = typeof pricing?.image === "string" ? Number(pricing.image) : NaN;
       models.push({
@@ -405,7 +489,8 @@ export class OpenAiCompatibleProvider implements MediaProvider {
 
       const bodyText = await response.text().catch(() => "");
       const error = httpError(response.status, bodyText, ctx);
-      if (response.status === 429 || response.status >= 500) {
+      // A model that does not exist will not appear on retry; let the caller switch models.
+      if (!MODEL_MISSING_RE.test(bodyText) && (response.status === 429 || response.status >= 500)) {
         lastError = error;
         const retryAfter = Number(response.headers.get("retry-after"));
         if (Number.isFinite(retryAfter) && retryAfter > 0 && attempt < MAX_ATTEMPTS - 1) {
@@ -460,4 +545,100 @@ function safeOrigin(url: string): string {
   } catch {
     return "<invalid url>";
   }
+}
+
+function inferModelType(id: string): "image" | "video" | null {
+  if (IMAGE_ID_RE.test(id)) return "image";
+  if (VIDEO_ID_RE.test(id)) return "video";
+  return null;
+}
+
+/** Gateways report a missing model as 404, or as 5xx with a model_not_found body. */
+function isMissingModel(error: unknown): boolean {
+  if (!(error instanceof MediaMcpError)) return false;
+  return error.status === 404 || MODEL_MISSING_RE.test(error.message);
+}
+
+/** Gateways may return the image as markdown, HTML, or a bare data URL in message.content. */
+function firstImageUrl(content: unknown): string | null {
+  if (typeof content === "string") return imageUrlFromText(content);
+  if (Array.isArray(content)) {
+    for (const part of content as unknown[]) {
+      const found = typeof part === "string" ? imageUrlFromText(part) : imageUrlFromPart(part);
+      if (found) return found;
+    }
+    for (const part of content as unknown[]) {
+      if (part && typeof part === "object") {
+        const text = (part as JsonRecord).text;
+        if (typeof text === "string") {
+          const found = imageUrlFromText(text);
+          if (found) return found;
+        }
+      }
+    }
+    return null;
+  }
+  return imageUrlFromPart(content);
+}
+
+function imageUrlFromText(text: string): string | null {
+  const markdown = MD_IMAGE_RE.exec(text);
+  if (markdown?.[1]) return markdown[1].trim();
+  const html = HTML_IMAGE_RE.exec(text);
+  if (html?.[1]) return html[1].trim();
+  const bare = BARE_DATA_URL_RE.exec(text);
+  if (bare) return bare[0];
+  const trimmed = text.trim();
+  return /^https?:\/\/\S+$/i.test(trimmed) ? trimmed : null;
+}
+
+function imageUrlFromPart(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  const part = value as JsonRecord;
+  const imageUrl = part.image_url;
+  if (typeof imageUrl === "string") return imageUrl;
+  if (imageUrl && typeof imageUrl === "object") {
+    const url = (imageUrl as JsonRecord).url;
+    if (typeof url === "string") return url;
+  }
+  // Anthropic-style { type: "image", source: { type: "base64", media_type, data } }
+  const source = part.source as JsonRecord | undefined;
+  if (source && source.type === "base64" && typeof source.data === "string") {
+    const mime = typeof source.media_type === "string" ? source.media_type : "image/png";
+    return `data:${mime};base64,${source.data}`;
+  }
+  // Gemini-style { inlineData: { mimeType, data } }
+  const inline = (part.inline_data ?? part.inlineData) as JsonRecord | Array<JsonRecord> | undefined;
+  const inlineParts = Array.isArray(inline) ? inline : inline ? [inline] : [];
+  for (const candidate of inlineParts) {
+    if (candidate && typeof candidate.data === "string") {
+      const mime =
+        typeof candidate.mime_type === "string"
+          ? candidate.mime_type
+          : typeof candidate.mimeType === "string"
+            ? candidate.mimeType
+            : "image/png";
+      return `data:${mime};base64,${candidate.data}`;
+    }
+  }
+  if (Array.isArray(part.parts)) return firstImageUrl(part.parts);
+  return part.type === "image_url" && typeof part.url === "string" ? part.url : null;
+}
+
+/** Keeps refusal text readable and stops a giant data URL from becoming the error message. */
+function summarizeContent(content: unknown): string {
+  const text =
+    typeof content === "string"
+      ? content
+      : Array.isArray(content)
+        ? content
+            .map((part) =>
+              part && typeof part === "object" && typeof (part as JsonRecord).text === "string"
+                ? ((part as JsonRecord).text as string)
+                : "",
+            )
+            .join(" ")
+        : "";
+  const clean = text.replace(DATA_URL_IN_TEXT_RE, "<embedded image data>").replace(/\s+/g, " ").trim();
+  return clean ? clean.slice(0, 240) : "<no content>";
 }

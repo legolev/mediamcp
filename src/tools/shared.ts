@@ -144,7 +144,7 @@ export async function imageToolResult(
   for (const image of images) {
     const ext = extensionForMime(image.mime, "png");
     const filePath = await saveBytes(dir, buildFilename(kind, opts.label, image.bytes, ext), image.bytes);
-    saved.push({ path: filePath, mime: image.mime, bytes: image.bytes.length, model: opts.model });
+    saved.push({ path: filePath, mime: image.mime, bytes: image.bytes.length, model: image.model ?? opts.model });
   }
 
   const lines = saved.map(
