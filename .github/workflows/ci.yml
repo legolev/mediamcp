@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node: [20, 22]
+        node: [22, 24]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -21,4 +21,23 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
+      - run: npm run smoke
+
+  # The published bundle still targets Node 20 (engines >=20, tsup target node20),
+  # but the dev toolchain (tsup 9, vitest 5) needs Node 22+. Build on 22 and run
+  # only the protocol smoke test on 20, so the shipped dist/ stays verified there.
+  runtime-node20:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - run: node --version
       - run: npm run smoke
