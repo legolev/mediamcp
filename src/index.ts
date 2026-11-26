@@ -1,6 +1,7 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 import { loadConfig } from "./config.js";
+import { STDIO_MAX_MESSAGE_BYTES } from "./constants.js";
 import { createProvider } from "./providers/index.js";
 import { withSchemaDialect } from "./schema/transport.js";
 import { buildServer } from "./server.js";
@@ -41,7 +42,19 @@ async function main(): Promise<void> {
   }
 
   const server = buildServer(config, createProvider(config));
-  await server.connect(withSchemaDialect(new StdioServerTransport(), config.schemaDialect));
+  // The SDK swallows transport and protocol errors unless someone listens; without this
+  // an oversized message makes the server exit silently.
+  server.server.onerror = (error) => {
+    const hint = /ReadBuffer exceeded/.test(error.message)
+      ? ` — stdio messages are limited to ${Math.round(STDIO_MAX_MESSAGE_BYTES / 1024 / 1024)} MiB; ` +
+        "pass large images as file paths instead of data: URLs"
+      : "";
+    console.error(`mediamcp: ${error.message}${hint}`);
+  };
+  const transport = new StdioServerTransport(process.stdin, process.stdout, {
+    maxBufferSize: STDIO_MAX_MESSAGE_BYTES,
+  });
+  await server.connect(withSchemaDialect(transport, config.schemaDialect));
   // stdout is the protocol channel; all human-facing logs go to stderr.
   console.error(`mediamcp v${config.version} ready on stdio (endpoint: ${config.baseUrl})`);
 }
