@@ -14,6 +14,15 @@ export const DEFAULT_SCHEMA_DIALECT: SchemaDialect = "2020-12";
 export const MAX_SOURCE_BYTES = 20 * 1024 * 1024;
 export const MAX_IMAGE_COUNT = 4;
 export const MAX_SOURCE_IMAGES = 4;
+/**
+ * Largest single JSON-RPC message accepted on stdin. Since 1.30 the SDK caps the stdio
+ * read buffer at 10 MiB and closes the connection on overflow, which would kill any
+ * edit_image / generate_video call that inlines a photo as a data: URL. Sized for the
+ * largest legitimate request — generate_video's first and last frame plus
+ * MAX_SOURCE_IMAGES references, each a MAX_SOURCE_BYTES image as base64 — plus 1 MiB
+ * for the prompt and JSON envelope.
+ */
+export const STDIO_MAX_MESSAGE_BYTES = (MAX_SOURCE_IMAGES + 2) * Math.ceil(MAX_SOURCE_BYTES / 3) * 4 + 1024 * 1024;
 export const MODELS_CACHE_TTL_MS = 60 * 60 * 1000;
 export const ERROR_BODY_LIMIT = 600;
 
