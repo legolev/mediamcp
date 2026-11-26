@@ -4,14 +4,20 @@ import { toErrorMessage } from "../errors.js";
 import type { GeneratedImage } from "../providers/types.js";
 import {
   aspectRatioField,
+  backgroundField,
   countField,
   filenamePrefixField,
   imageErrorResult,
   imageOutputShape,
   imageToolResult,
+  moderationField,
   modelField,
+  outputCompressionField,
   outputDirField,
+  outputFormatField,
   promptField,
+  qualityField,
+  sizeField,
   type ToolContext,
 } from "./shared.js";
 
@@ -29,13 +35,32 @@ export function registerGenerateImage(server: McpServer, ctx: ToolContext): void
         model: modelField,
         count: countField,
         aspect_ratio: aspectRatioField,
+        size: sizeField,
+        quality: qualityField,
+        background: backgroundField,
+        output_format: outputFormatField,
+        output_compression: outputCompressionField,
+        moderation: moderationField,
         output_dir: outputDirField,
         filename_prefix: filenamePrefixField,
       },
       outputSchema: imageOutputShape,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
-    async ({ prompt, model, count, aspect_ratio, output_dir, filename_prefix }) => {
+    async ({
+      prompt,
+      model,
+      count,
+      aspect_ratio,
+      size,
+      quality,
+      background,
+      output_format,
+      output_compression,
+      moderation,
+      output_dir,
+      filename_prefix,
+    }) => {
       const chosenModel = model?.trim() || ctx.config.imageModel;
       const results = await Promise.allSettled(
         Array.from({ length: count }, () =>
@@ -43,6 +68,12 @@ export function registerGenerateImage(server: McpServer, ctx: ToolContext): void
             prompt,
             model: chosenModel,
             ...(aspect_ratio ? { aspectRatio: aspect_ratio } : {}),
+            ...(size ? { size } : {}),
+            ...(quality ? { quality } : {}),
+            ...(background ? { background } : {}),
+            ...(output_format ? { outputFormat: output_format } : {}),
+            ...(output_compression !== undefined ? { outputCompression: output_compression } : {}),
+            ...(moderation ? { moderation } : {}),
           }),
         ),
       );
